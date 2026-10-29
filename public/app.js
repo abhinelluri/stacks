@@ -35,7 +35,7 @@ const VERB = {
 };
 const FILTER_DEFAULT = { venue: "all", liked: false, rewatch: false, notes: false, rating: "any", decade: "any", q: "", director: "", actor: "", genre: "" };
 
-let D, films, log = null, sel = null, bookUnit = null;
+let D, films, log = null, sel = null, bookUnit = null, showSkipped = false;
 const state = { filmTab: "diary", f: { ...FILTER_DEFAULT }, moreOpen: false, tab: { book: "reading", comic: "reading", tv: "watching" }, comicView: "shelves", topCat: "film", topScope: "all", shelfPick: null };
 
 const items = k => k === "book" ? D.books : k === "comic" ? D.series : k === "tv" ? D.shows : D.films;
@@ -46,11 +46,14 @@ const artOf = (k, x) => k === "film" || k === "tv" ? x.poster : x.cover;
 
 /* units = issues (comics) or episodes (TV); not released yet = not "out" */
 function units(k, x) {
-  if (k === "comic") return x.issues.map((i, n) => ({ ref: i, key: String(n), label: `#${i.n}`, done: i.read != null, when: i.read, out: !i.released || i.released <= today() }));
+  if (k === "comic") {
+    const start = x.startAt != null ? Math.max(0, x.issues.findIndex(i => String(i.n) === String(x.startAt))) : 0;   // where your run begins
+    return x.issues.map((i, n) => ({ ref: i, key: String(n), label: `#${i.n}`, done: i.read != null, when: i.read, out: !i.released || i.released <= today(), skip: n < start }));
+  }
   return x.seasons.flatMap(s => s.episodes.map(e => ({ ref: e, key: `${s.n}:${e.n}`, label: `S${s.n}E${e.n}`, season: s.n, done: e.watched != null, when: e.watched, out: !e.airdate || e.airdate <= today() })));
 }
 function progress(k, x) {
-  const u = units(k, x).filter(i => i.out), done = u.filter(i => i.done).length, last = u.map(i => i.done).lastIndexOf(true);
+  const u = units(k, x).filter(i => i.out && !i.skip), done = u.filter(i => i.done).length, last = u.map(i => i.done).lastIndexOf(true);
   return { done, total: u.length, next: u.find((i, n) => !i.done && n > last) || u.find(i => !i.done) };
 }
 const seasonRating = s => { const r = s.episodes.filter(e => e.rating != null).map(e => e.rating); return r.length ? Math.round(avg(r) * 2) / 2 : null; };
@@ -311,7 +314,7 @@ function renderShelfPage(k) {
       <button class="row c-${k}" data-open="${k}:${esc(x.id)}">${cover(k, nameOf(k, x), "", { thumb: true, img: artOf(k, x) })}
         <span><b>${esc(nameOf(k, x))}</b> <span class="sub">${esc(subOf(k, x))}</span></span>
         <span class="count num">${p.done}/${p.total}${p.next ? `, next ${esc(p.next.label)}` : ""}${r != null ? ` ${stars(r)}` : ""}</span>
-        <span class="cells" aria-hidden="true">${units(k, x).slice(0, 160).map(u => `<i class="${u.done ? "r" : u.out ? "" : "f"}"></i>`).join("")}</span>
+        <span class="cells" aria-hidden="true">${units(k, x).filter(u => !u.skip).slice(0, 160).map(u => `<i class="${u.done ? "r" : u.out ? "" : "f"}"></i>`).join("")}</span>
       </button>`; }).join("")}</div>`;
   }
   $("#app").innerHTML = `<div class="view"><div class="page-head"><h1>${PLURAL[k]}</h1><div class="summary">${summary}</div>${top}</div>${body}</div>`;
@@ -331,7 +334,7 @@ function renderUpcoming() {
 }
 
 /* detail sheet for books, shows and series */
-const unitBtn = u => `<button class="${u.done ? "r" : ""}${sel === u.key ? " sel" : ""}" data-u="${u.key}" ${u.out ? "" : "disabled"}>${esc(u.label.replace(/^S\d+/, ""))}${u.when ? `<small>${shortDate(u.when)}</small>` : !u.out ? `<small>${shortDate(u.ref.released || u.ref.airdate)}</small>` : ""}${u.ref.rating != null ? `<small>${starText(u.ref.rating)}</small>` : ""}</button>`;
+const unitBtn = u => `<button class="${u.done ? "r" : ""}${u.skip ? " s" : ""}${sel === u.key ? " sel" : ""}" data-u="${u.key}" ${u.out ? "" : "disabled"}>${esc(u.label.replace(/^S\d+/, ""))}${u.when ? `<small>${shortDate(u.when)}</small>` : !u.out ? `<small>${shortDate(u.ref.released || u.ref.airdate)}</small>` : ""}${u.ref.rating != null ? `<small>${starText(u.ref.rating)}</small>` : ""}</button>`;
 function openDetail(k, id) {
   if (k === "film") return openFilm(id);
   const x = find(k, id); if (!x) return;
@@ -341,10 +344,10 @@ function openDetail(k, id) {
     const p = progress(k, x), us = units(k, x), s = sel && us.find(u => u.key === sel), noun = k === "tv" ? "episode" : "issue";
     const grid = k === "tv"
       ? x.seasons.map(se => `<div class="field"><span>Season ${se.n}${seasonRating(se) != null ? ` ${stars(seasonRating(se))}` : ""}</span><div class="unit-grid c-tv">${us.filter(u => u.season === se.n).map(unitBtn).join("")}</div></div>`).join("")
-      : `<div class="unit-grid c-comic">${us.map(unitBtn).join("")}</div>`;
-    mid = `<p class="hint">${p.done} of ${p.total} ${noun}s ${k === "tv" ? "watched" : "read"}${p.next ? `, next ${p.next.label}` : ""}. Tap one to mark it, date it, rate it, or mark everything up to it.</p>${grid}
+      : (() => { const sk = us.filter(u => u.skip); return `${sk.length ? `<button class="linkish" id="show-skip" style="justify-self:start">${showSkipped ? "Hide" : "Show"} issues before your run (${sk[0].label}–${sk.at(-1).label})</button>` : ""}<div class="unit-grid c-comic">${us.filter(u => showSkipped || !u.skip).map(unitBtn).join("")}</div>`; })();
+    mid = `<p class="hint">${p.done} of ${p.total} ${noun}s ${k === "tv" ? "watched" : "read"}${p.next ? `, next ${p.next.label}` : ""}. Tap one to mark it, date it, rate it, or mark everything up to it.${k === "comic" ? " Starting partway through a run? Tap your first issue and choose Start my run here." : ""}</p>${grid}
       ${s ? `<div class="editor"><b>${esc(s.label)}${s.ref.title ? ` ${esc(s.ref.title)}` : ""}</b>
-        <div class="controls"><button class="toggle plain" id="u-done" aria-pressed="${s.done}">${s.done ? (k === "tv" ? "Watched" : "Read") : (k === "tv" ? "Mark watched" : "Mark read")}</button><button class="chip" id="u-thru">Mark all up to here</button></div>
+        <div class="controls"><button class="toggle plain" id="u-done" aria-pressed="${s.done}">${s.done ? (k === "tv" ? "Watched" : "Read") : (k === "tv" ? "Mark watched" : "Mark read")}</button><button class="chip" id="u-thru">Mark all up to here</button>${k === "comic" ? `<button class="chip" id="u-start">${String(x.startAt) === String(s.ref.n) ? "Start from the first issue instead" : "Start my run here"}</button>` : ""}</div>
         ${s.done ? `<label class="field"><span>Date</span><input type="date" id="u-date" value="${s.when || today()}"></label><div class="field"><span>Rating</span>${starPick("u-stars", s.ref.rating)}</div>` : ""}
       </div>` : ""}`;
   }
@@ -373,11 +376,14 @@ function openDetail(k, id) {
     };
     if (k === "book") return bindBook(x, el, re);
     $$("[data-u]", el).forEach(b => b.onclick = () => { sel = sel === b.dataset.u ? null : b.dataset.u; re(); });
+    const ss = $("#show-skip", el); if (ss) ss.onclick = () => { showSkipped = !showSkipped; re(); };
     const us = units(k, x), idx = us.findIndex(u => u.key === sel); if (idx < 0) return;
     const s = us[idx], field = k === "tv" ? "watched" : "read";
     const mark = (u, on) => { u.ref[field] = on ? (u.ref[field] || today()) : null; };
     $("#u-done", el).onclick = () => { mark(s, !s.done); autoStatus(k, x); re(); };
-    $("#u-thru", el).onclick = () => { us.forEach((u, n) => { if (u.out && n <= idx) mark(u, true); }); autoStatus(k, x); toast(`Marked through ${s.label}`); re(); };
+    const us0 = $("#u-start", el);
+    if (us0) us0.onclick = () => { x.startAt = String(x.startAt) === String(s.ref.n) ? null : s.ref.n; showSkipped = false; autoStatus(k, x); toast(x.startAt ? `Your run now starts at #${x.startAt}` : "Counting from the first issue"); re(); };
+    $("#u-thru", el).onclick = () => { us.forEach((u, n) => { if (u.out && !u.skip && n <= idx) mark(u, true); }); autoStatus(k, x); toast(`Marked through ${s.label}`); re(); };
     const di = $("#u-date", el); if (di) di.onchange = e => { s.ref[field] = e.target.value || today(); re(); };
     if ($("#u-stars", el)) bindStars("u-stars", () => s.ref.rating, v => s.ref.rating = v, re);
   });
@@ -612,6 +618,7 @@ function renderLog() {
     ${log.pick ? `
       ${k === "book" ? `<div class="field"><span>What happened</span><div class="controls">${BOOK_ACTS.map(([a, l]) => `<button class="chip small" data-act="${a}" aria-pressed="${log.act === a}">${l}</button>`).join("")}</div></div>
         ${log.act === "progress" ? `<p class="hint">${curRead(x) ? "Opens the book, where you log a page, chapter or audiobook time for any day." : "Start the book first, then log progress."}</p>` : ""}` : ""}
+      ${k === "comic" && x && !x.issues.some(i => i.read != null) && x.issues.filter(i => !i.released || i.released <= today()).length > 1 ? `<label class="field"><span>Your run starts at</span><select id="log-start">${x.issues.filter(i => !i.released || i.released <= today()).map(i => `<option value="${esc(i.n)}" ${String(x.startAt ?? x.issues[0].n) === String(i.n) ? "selected" : ""}>#${esc(i.n)}</option>`).join("")}</select></label>` : ""}
       ${(k === "tv" || k === "comic") ? `<p style="margin:0;font-weight:700">${next ? `Marking ${esc(next.label)} as ${k === "tv" ? "watched" : "read"}` : "You're caught up on this one."}</p>` : ""}
       ${rateIt ? `<div class="field"><span>Rating</span>${starPick("log-stars", log.rating)}<p class="hint">Tap the left half of a star for a half star.</p></div>` : ""}
       ${filmWatched ? `<div class="controls"><button class="toggle" id="lg-like" aria-pressed="${log.liked}">♥ ${log.liked ? "Liked" : "Like"}</button><button class="toggle plain" id="lg-re" aria-pressed="${log.rewatch}">Rewatch</button></div>
@@ -631,6 +638,7 @@ function renderLog() {
     $$("[data-r]", s).forEach(b => b.onclick = () => pickRemote(b.dataset.r));
     $$("[data-v]", s).forEach(b => b.onclick = () => { log.venue = b.dataset.v; re(); });
     $$("[data-act]", s).forEach(b => b.onclick = () => { log.act = b.dataset.act; re(); });
+    const ls = $("#log-start", s); if (ls) ls.onchange = () => { x.startAt = ls.value === String(x.issues[0].n) ? null : ls.value; detect(); re(); };
     const on = (id, fn) => { const el = $(id, s); if (el) el.onclick = fn; };
     on("#lg-like", () => { log.liked = !log.liked; re(); });
     on("#lg-re", () => { log.rewatch = !log.rewatch; re(); });

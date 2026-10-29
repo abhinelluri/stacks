@@ -306,3 +306,4 @@ html{-webkit-text-size-adjust:100%}
 .ok{color:var(--book);font-weight:700}
 .missing{color:var(--film);font-weight:700}
 body.locked .bottom, body.locked .fab, body.locked .tabs, body.locked .top-right{display:none}
+.unit-grid button.s{opacity:.45;border-style:dotted}
