@@ -55,7 +55,7 @@ export async function backfill(env) {
 export function autoStatus(kind, x) {
   const t = today();
   const units = kind === "show" ? x.seasons.flatMap(s => s.episodes).map(e => ({ out: !e.airdate || e.airdate <= t, done: e.watched != null }))
-    : x.issues.slice(Math.max(0, x.startAt != null ? x.issues.findIndex(i => String(i.n) === String(x.startAt)) : 0)).map(i => ({ out: !i.released || i.released <= t, done: i.read != null }));
+    : x.issues.slice(Math.max(0, x.startAt != null ? x.issues.findIndex(i => String(i.n) === String(x.startAt)) : x.issues.findIndex(i => parseFloat(i.n) >= 1))).map(i => ({ out: !i.released || i.released <= t, done: i.read != null }));
   const out = units.filter(u => u.out), active = kind === "show" ? "watching" : "reading";
   const set = s => { if (x.status !== s) { x.status = s; (x.history ||= []).push({ s, d: t }); } };
   if (x.status === "caught" && out.some(u => !u.done)) set(active);

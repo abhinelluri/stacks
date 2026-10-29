@@ -45,9 +45,11 @@ const subOf = (k, x) => k === "book" ? x.authors.join(", ") : k === "comic" ? `$
 const artOf = (k, x) => k === "film" || k === "tv" ? x.poster : x.cover;
 
 /* units = issues (comics) or episodes (TV); not released yet = not "out" */
+/* Runs begin at #1 by default, not at specials like #-1 or #0 that sort first */
+const firstRegular = x => Math.max(0, x.issues.findIndex(i => parseFloat(i.n) >= 1));
 function units(k, x) {
   if (k === "comic") {
-    const start = x.startAt != null ? Math.max(0, x.issues.findIndex(i => String(i.n) === String(x.startAt))) : 0;   // where your run begins
+    const start = x.startAt != null ? Math.max(0, x.issues.findIndex(i => String(i.n) === String(x.startAt))) : firstRegular(x);   // where your run begins
     return x.issues.map((i, n) => ({ ref: i, key: String(n), label: `#${i.n}`, done: i.read != null, when: i.read, out: !i.released || i.released <= today(), skip: n < start }));
   }
   return x.seasons.flatMap(s => s.episodes.map(e => ({ ref: e, key: `${s.n}:${e.n}`, label: `S${s.n}E${e.n}`, season: s.n, done: e.watched != null, when: e.watched, out: !e.airdate || e.airdate <= today() })));
@@ -618,7 +620,7 @@ function renderLog() {
     ${log.pick ? `
       ${k === "book" ? `<div class="field"><span>What happened</span><div class="controls">${BOOK_ACTS.map(([a, l]) => `<button class="chip small" data-act="${a}" aria-pressed="${log.act === a}">${l}</button>`).join("")}</div></div>
         ${log.act === "progress" ? `<p class="hint">${curRead(x) ? "Opens the book, where you log a page, chapter or audiobook time for any day." : "Start the book first, then log progress."}</p>` : ""}` : ""}
-      ${k === "comic" && x && !x.issues.some(i => i.read != null) && x.issues.filter(i => !i.released || i.released <= today()).length > 1 ? `<label class="field"><span>Your run starts at</span><select id="log-start">${x.issues.filter(i => !i.released || i.released <= today()).map(i => `<option value="${esc(i.n)}" ${String(x.startAt ?? x.issues[0].n) === String(i.n) ? "selected" : ""}>#${esc(i.n)}</option>`).join("")}</select></label>` : ""}
+      ${k === "comic" && x && !x.issues.some(i => i.read != null) && x.issues.filter(i => !i.released || i.released <= today()).length > 1 ? `<label class="field"><span>Your run starts at</span><select id="log-start">${x.issues.filter(i => !i.released || i.released <= today()).map(i => `<option value="${esc(i.n)}" ${String(x.startAt ?? x.issues[firstRegular(x)].n) === String(i.n) ? "selected" : ""}>#${esc(i.n)}</option>`).join("")}</select></label>` : ""}
       ${(k === "tv" || k === "comic") ? `<p style="margin:0;font-weight:700">${next ? `Marking ${esc(next.label)} as ${k === "tv" ? "watched" : "read"}` : "You're caught up on this one."}</p>` : ""}
       ${rateIt ? `<div class="field"><span>Rating</span>${starPick("log-stars", log.rating)}<p class="hint">Tap the left half of a star for a half star.</p></div>` : ""}
       ${filmWatched ? `<div class="controls"><button class="toggle" id="lg-like" aria-pressed="${log.liked}">♥ ${log.liked ? "Liked" : "Like"}</button><button class="toggle plain" id="lg-re" aria-pressed="${log.rewatch}">Rewatch</button></div>
@@ -638,7 +640,7 @@ function renderLog() {
     $$("[data-r]", s).forEach(b => b.onclick = () => pickRemote(b.dataset.r));
     $$("[data-v]", s).forEach(b => b.onclick = () => { log.venue = b.dataset.v; re(); });
     $$("[data-act]", s).forEach(b => b.onclick = () => { log.act = b.dataset.act; re(); });
-    const ls = $("#log-start", s); if (ls) ls.onchange = () => { x.startAt = ls.value === String(x.issues[0].n) ? null : ls.value; detect(); re(); };
+    const ls = $("#log-start", s); if (ls) ls.onchange = () => { x.startAt = ls.value === String(x.issues[firstRegular(x)].n) ? null : ls.value; detect(); re(); };
     const on = (id, fn) => { const el = $(id, s); if (el) el.onclick = fn; };
     on("#lg-like", () => { log.liked = !log.liked; re(); });
     on("#lg-re", () => { log.rewatch = !log.rewatch; re(); });
