@@ -1,0 +1,24 @@
+{
+  "name": "stacks",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Personal tracker for films, TV, books and comics, running on Cloudflare Workers",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "migrate": "wrangler d1 migrations apply stacks-db --remote",
+    "migrate:local": "wrangler d1 migrations apply stacks-db --local",
+    "deploy": "wrangler deploy",
+    "import": "node scripts/import.mjs --remote",
+    "import:local": "node scripts/import.mjs --local",
+    "logs": "wrangler tail"
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "^13.3.3"
+  },
+  "devDependencies": {
+    "@simplewebauthn/browser": "^13.3.0",
+    "qrcode-generator": "^1.5.2",
+    "wrangler": "^4.155.0"
+  }
+}

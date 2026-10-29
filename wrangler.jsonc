@@ -1,0 +1,39 @@
+{
+  // Stacks: one Worker serves the app, the API, cached cover art and the scheduled jobs.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "stacks",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/img/*"]
+  },
+
+  "d1_databases": [
+    { "binding": "DB", "database_name": "stacks-db", "database_id": "74916192-a1e7-49f2-adbd-d36b278af8c3", "migrations_dir": "migrations" }
+  ],
+  "kv_namespaces": [
+    { "binding": "COVERS", "id": "442bdca4fd3140c18bc98961ccc7b455" }
+  ],
+
+  "triggers": {
+    "crons": [
+      "*/5 * * * *",   // match imported titles to TMDB / Open Library, a few at a time
+      "30 13 * * *",   // daily: new TV episodes, new comic issues, upcoming releases
+      "0 8 * * SUN"    // Sundays: back up your library to GitHub
+    ]
+  },
+
+  "vars": {
+    // Your GitHub "username/repo" for the weekly backup. Leave empty to skip backups.
+    "GITHUB_REPO": "abhinelluri/stacks"
+  },
+
+  "observability": { "enabled": true }
+}
