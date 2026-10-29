@@ -284,9 +284,9 @@ function openFilm(id) {
 
 /* ================= TV / BOOKS / COMICS ================= */
 const EMPTY = {
-  book: { reading: "No books in progress.", want: "Books you want to read collect here, dated when you add them.", paused: "Nothing paused.", read: "Finished books, with dates and ratings.", dnf: "Books you stopped partway through still count in your history." },
-  comic: { reading: "No runs in progress.", want: "Series you want to start, dated when you add them.", paused: "Nothing paused.", caught: "Ongoing series where you've read everything out so far. A new issue moves them back to Reading.", finished: "Completed runs.", dropped: "Series you've stopped following." },
-  tv: { watching: "Shows you're in the middle of, with your next episode.", want: "Shows you want to start.", paused: "Nothing paused.", caught: "Shows you're current on. A new episode moves them back to Watching.", finished: "Shows you've seen to the end.", dropped: "Shows you gave up on." },
+  book: { reading: "No books in progress.", want: "Books you want to read collect here. Tap + and choose Want to read.", paused: "Nothing paused.", read: "Finished books, with dates and ratings.", dnf: "Books you stopped partway through still count in your history." },
+  comic: { reading: "No runs in progress.", want: "Series you want to start. Tap + and choose Want to read.", paused: "Nothing paused.", caught: "Ongoing series where you've read everything out so far. A new issue moves them back to Reading.", finished: "Completed runs.", dropped: "Series you've stopped following." },
+  tv: { watching: "Shows you're in the middle of, with your next episode.", want: "Shows you want to start. Tap + and choose Want to watch.", paused: "Nothing paused.", caught: "Shows you're current on. A new episode moves them back to Watching.", finished: "Shows you've seen to the end.", dropped: "Shows you gave up on." },
 };
 function renderShelfPage(k) {
   const all = items(k);
@@ -592,11 +592,20 @@ function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = fal
 document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("#scrim").hidden) closeSheet(); });
 
 /* ================= LOG SHEET ================= */
-const BOOK_ACTS = [["progress","Progress"],["reading","Started"],["paused","Paused"],["read","Finished"],["dnf","DNF"],["want","Want to read"]];
+const BOOK_ACTS = [["progress","Progress"],["reading","Started"],["read","Finished"],["dnf","DNF"]];
+/* What the + sheet can do for each type: log something, add it to your want list, or move it to another shelf */
+const MODES = {
+  film: [["watched","Watched"],["want","Want to watch"]],
+  tv: [["log","Log episode"],["want","Want to watch"],["status","Move to…"]],
+  book: [["log","Log reading"],["want","Want to read"],["status","Move to…"]],
+  comic: [["log","Log issue"],["want","Want to read"],["status","Move to…"]],
+};
+const WANT = { tv: "Want to watch", book: "Want to read", comic: "Want to read" };
+const defaultMode = k => (k === "film" ? "watched" : "log");
 function openLog(o = {}) {
   const e = o.edit;
   log = e ? { kind: "film", edit: e, pick: e.film, q: films[e.film].title, rating: e.rating, venue: e.venue, rewatch: e.rewatch, liked: films[e.film].liked, date: e.date, note: e.review || "", mode: "watched" }
-    : { kind: o.kind || "film", pick: o.pick || null, q: o.title || "", rating: null, venue: "home", rewatch: !!(o.pick && D.watches.some(w => w.film === o.pick)), liked: !!films[o.pick]?.liked, date: today(), note: "", mode: "watched", act: "progress" };
+    : { kind: o.kind || "film", pick: o.pick || null, q: o.title || "", rating: null, venue: "home", rewatch: !!(o.pick && D.watches.some(w => w.film === o.pick)), liked: !!films[o.pick]?.liked, date: today(), note: "", mode: o.mode || defaultMode(o.kind || "film"), act: "progress", status: null };
   renderLog(); if (!log.pick) $("#log-q")?.focus();
 }
 function logResults() {
@@ -607,39 +616,44 @@ function logResults() {
 }
 function renderLog() {
   const k = log.kind, res = logResults(), x = log.pick && k !== "film" ? find(k, log.pick) : null;
-  const next = x && k !== "book" ? progress(k, x).next : null;
-  const filmWatched = k === "film" && log.mode === "watched";
-  const rateIt = filmWatched || (k === "book" && log.act === "read") || !!next;
-  const canSave = log.pick && (k === "film" || k === "book" || next);
+  const m = log.mode, logging = k === "film" ? m === "watched" : m === "log";
+  const next = x && k !== "book" && logging ? progress(k, x).next : null;
+  const filmWatched = k === "film" && m === "watched";
+  const rateIt = filmWatched || (k === "book" && logging && log.act === "read") || !!next;
+  const canSave = log.pick && (k === "film" || m === "want" || (m === "status" && log.status) || (k === "book" && logging) || next);
+  const cur = x && STATUS[k]?.find(z => z[0] === x.status)?.[1];
   sheet(`
     <div class="sheet-head"><h2>${log.edit ? "Edit entry" : "Log something"}</h2><button class="x" data-close>Close</button></div>
     ${log.edit ? "" : `<div class="seg" role="group" aria-label="What are you logging">${["film","tv","book","comic"].map(z => `<button data-k="${z}" aria-pressed="${k === z}">${LABEL[z]}</button>`).join("")}</div>`}
-    ${k === "film" && !log.edit ? `<div class="seg two" role="group">${[["watched","Watched"],["want","Want to watch"]].map(([m, l]) => `<button data-mode="${m}" aria-pressed="${log.mode === m}">${l}</button>`).join("")}</div>` : ""}
+    ${!log.edit ? `<div class="seg ${MODES[k].length === 2 ? "two" : "three"}" role="group" aria-label="What do you want to do">${MODES[k].map(([v, l]) => `<button data-mode="${v}" aria-pressed="${m === v}">${l}</button>`).join("")}</div>` : ""}
     <input class="search" id="log-q" type="search" autocomplete="off" ${log.edit ? "disabled" : ""} placeholder="${{ film: "Film title", tv: "Show title", book: "Book title or author", comic: "Series name" }[k]}" value="${esc(log.q)}" aria-label="Search">
     ${log.q && !log.pick ? resultsHtml(res) : ""}
     ${log.pick ? `
-      ${k === "book" ? `<div class="field"><span>What happened</span><div class="controls">${BOOK_ACTS.map(([a, l]) => `<button class="chip small" data-act="${a}" aria-pressed="${log.act === a}">${l}</button>`).join("")}</div></div>
+      ${m === "want" && cur && x.status !== "want" ? `<p class="hint">It's in ${esc(cur)} now. This moves it to ${WANT[k]}.</p>` : ""}
+      ${m === "status" ? `<div class="field"><span>Move to${cur ? ` (now in ${esc(cur)})` : ""}</span><div class="controls">${STATUS[k].filter(([v]) => v !== "want").map(([v, l]) => `<button class="chip small" data-st2="${v}" aria-pressed="${log.status === v}">${l}</button>`).join("")}</div></div>` : ""}
+      ${k === "book" && logging ? `<div class="field"><span>What happened</span><div class="controls">${BOOK_ACTS.map(([a, l]) => `<button class="chip small" data-act="${a}" aria-pressed="${log.act === a}">${l}</button>`).join("")}</div></div>
         ${log.act === "progress" ? `<p class="hint">${curRead(x) ? "Opens the book, where you log a page, chapter or audiobook time for any day." : "Start the book first, then log progress."}</p>` : ""}` : ""}
-      ${k === "comic" && x && !x.issues.some(i => i.read != null) && x.issues.filter(i => !i.released || i.released <= today()).length > 1 ? `<label class="field"><span>Your run starts at</span><select id="log-start">${x.issues.filter(i => !i.released || i.released <= today()).map(i => `<option value="${esc(i.n)}" ${String(x.startAt ?? x.issues[firstRegular(x)].n) === String(i.n) ? "selected" : ""}>#${esc(i.n)}</option>`).join("")}</select></label>` : ""}
-      ${(k === "tv" || k === "comic") ? `<p style="margin:0;font-weight:700">${next ? `Marking ${esc(next.label)} as ${k === "tv" ? "watched" : "read"}` : "You're caught up on this one."}</p>` : ""}
+      ${k === "comic" && logging && x && !x.issues.some(i => i.read != null) && x.issues.filter(i => !i.released || i.released <= today()).length > 1 ? `<label class="field"><span>Your run starts at</span><select id="log-start">${x.issues.filter(i => !i.released || i.released <= today()).map(i => `<option value="${esc(i.n)}" ${String(x.startAt ?? x.issues[firstRegular(x)].n) === String(i.n) ? "selected" : ""}>#${esc(i.n)}</option>`).join("")}</select></label>` : ""}
+      ${(k === "tv" || k === "comic") && logging ? `<p style="margin:0;font-weight:700">${next ? `Marking ${esc(next.label)} as ${k === "tv" ? "watched" : "read"}` : "You're caught up on this one."}</p>` : ""}
       ${rateIt ? `<div class="field"><span>Rating</span>${starPick("log-stars", log.rating)}<p class="hint">Tap the left half of a star for a half star.</p></div>` : ""}
       ${filmWatched ? `<div class="controls"><button class="toggle" id="lg-like" aria-pressed="${log.liked}">♥ ${log.liked ? "Liked" : "Like"}</button><button class="toggle plain" id="lg-re" aria-pressed="${log.rewatch}">Rewatch</button></div>
         <div class="field"><span>Where</span><div class="controls">${Object.entries(VENUE).map(([v, l]) => `<button class="chip small" data-v="${v}" aria-pressed="${log.venue === v}">${l}</button>`).join("")}</div></div>` : ""}
-      ${!(k === "book" && log.act === "progress") && !(k === "film" && log.mode === "want") ? `<label class="field"><span>Date</span><input type="date" id="log-date" value="${log.date}"></label>` : ""}
-      ${filmWatched || (k === "book" && ["read", "dnf"].includes(log.act)) ? `<label class="field"><span>Notes</span><textarea id="log-note" rows="3" placeholder="Favorite moment, thoughts, anything">${esc(log.note)}</textarea></label>` : ""}
+      ${!(k === "book" && logging && log.act === "progress") && !(k === "film" && m === "want") ? `<label class="field"><span>Date</span><input type="date" id="log-date" value="${log.date}"></label>` : ""}
+      ${filmWatched || (k === "book" && logging && ["read", "dnf"].includes(log.act)) ? `<label class="field"><span>Notes</span><textarea id="log-note" rows="3" placeholder="Favorite moment, thoughts, anything">${esc(log.note)}</textarea></label>` : ""}
     ` : ""}
-    <button class="save" id="log-save" ${canSave ? "" : "disabled"}>${log.edit ? "Save changes" : k === "film" && log.mode === "want" ? "Add to watchlist" : k === "book" && log.act === "progress" ? "Log progress" : "Save"}</button>
+    <button class="save" id="log-save" ${canSave ? "" : "disabled"}>${log.edit ? "Save changes" : k === "film" && m === "want" ? "Add to watchlist" : m === "want" ? `Add to ${WANT[k]}` : m === "status" ? "Move it" : k === "book" && log.act === "progress" ? "Log progress" : "Save"}</button>
     ${log.edit ? `<button class="danger" id="log-del">Delete this entry</button>` : ""}
   `, s => {
     const keep = () => { const d = $("#log-date"), n = $("#log-note"); if (d) log.date = d.value; if (n) log.note = n.value; };
     const re = () => { keep(); renderLog(); };
-    $$("[data-k]", s).forEach(b => b.onclick = () => { log.kind = b.dataset.k; log.pick = null; log.q = ""; log.remote = null; renderLog(); $("#log-q").focus(); });
+    $$("[data-k]", s).forEach(b => b.onclick = () => { log.kind = b.dataset.k; log.pick = null; log.q = ""; log.remote = null; log.mode = defaultMode(b.dataset.k); log.status = null; renderLog(); $("#log-q").focus(); });
     $$("[data-mode]", s).forEach(b => b.onclick = () => { log.mode = b.dataset.mode; re(); });
     $("#log-q").oninput = e => { log.q = e.target.value; log.pick = null; queueRemote(); const p = e.target.selectionStart; renderLog(); const i = $("#log-q"); i.focus(); i.setSelectionRange(p, p); };
     $$("[data-p]", s).forEach(b => b.onclick = () => { log.pick = b.dataset.p; log.q = b.querySelector("b").textContent; if (k === "film") { log.rewatch = D.watches.some(w => w.film === log.pick); log.liked = films[log.pick].liked; } renderLog(); });
     $$("[data-r]", s).forEach(b => b.onclick = () => pickRemote(b.dataset.r));
     $$("[data-v]", s).forEach(b => b.onclick = () => { log.venue = b.dataset.v; re(); });
     $$("[data-act]", s).forEach(b => b.onclick = () => { log.act = b.dataset.act; re(); });
+    $$("[data-st2]", s).forEach(b => b.onclick = () => { log.status = b.dataset.st2; re(); });
     const ls = $("#log-start", s); if (ls) ls.onchange = () => { x.startAt = ls.value === String(x.issues[firstRegular(x)].n) ? null : ls.value; detect(); re(); };
     const on = (id, fn) => { const el = $(id, s); if (el) el.onclick = fn; };
     on("#lg-like", () => { log.liked = !log.liked; re(); });
@@ -657,6 +671,14 @@ function renderLog() {
         if (log.rating != null) films[log.pick].rating = log.rating;
         D.watches.sort((a, b) => b.date.localeCompare(a.date));
         toast(log.edit ? "Entry updated" : "Logged"); return closeSheet();
+      }
+      if (m === "want") {
+        if (x.status !== "want" || !x.history.some(h => h.s === "want")) k === "book" ? setBookStatus(x, "want", log.date) : setStatus(k, x, "want", log.date);
+        toast(`Added to ${WANT[k]}`); return closeSheet();
+      }
+      if (m === "status") {
+        k === "book" ? setBookStatus(x, log.status, log.date) : setStatus(k, x, log.status, log.date);
+        toast(`Moved to ${STATUS[k].find(z => z[0] === log.status)[1]}`); return closeSheet();
       }
       if (k === "book") {
         if (log.act === "progress") { const id = log.pick; if (!curRead(x)) return toast("Start the book first"); log = null; sel = null; bookUnit = null; return openDetail("book", id); }

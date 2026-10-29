@@ -307,3 +307,5 @@ html{-webkit-text-size-adjust:100%}
 .missing{color:var(--film);font-weight:700}
 body.locked .bottom, body.locked .fab, body.locked .tabs, body.locked .top-right{display:none}
 .unit-grid button.s{opacity:.45;border-style:dotted}
+.seg.three{grid-template-columns:repeat(3,1fr)}
+.seg.three button{font-size:13px;line-height:1.2}
