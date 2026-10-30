@@ -911,7 +911,7 @@ async function pickRemote(ref) {
   }
   toast(`Adding ${r.title}…`);
   try {
-    const { doc } = await post("/api/add", { kind, ref });
+    const { doc } = await post("/api/add", { kind, ref, title: r.title, year: r.year });
     const sk = KIND_OF[kind], arr = COLL[sk]();
     if (!arr.some(x => x.id === doc.id)) arr.push(doc);
     snap.set(keyOf(sk, doc.id), JSON.stringify(doc));

@@ -104,12 +104,21 @@ async function cv(env, f, path, params = {}) {
   const u = new URL(`https://comicvine.gamespot.com/api${path}`);
   u.searchParams.set("api_key", env.COMICVINE_KEY); u.searchParams.set("format", "json");
   Object.entries(params).forEach(([k, v]) => u.searchParams.set(k, v));
-  const r = await f(u, { headers: { "user-agent": UA } });
+  /* Comic Vine blocks clients that send more than about one request a second, so space them out */
+  const wait = cvLast + 1100 - Date.now();
+  if (wait > 0) await new Promise(res => setTimeout(res, wait));
+  cvLast = Date.now();
+  const r = await f(u, { headers: { "user-agent": UA, accept: "application/json" } });
+  if (r.status === 420 || r.status === 429) throw new Error(`Comic Vine ${r.status} rate limit`);
   if (!r.ok) throw new Error(`Comic Vine ${r.status}`);
-  const d = await r.json();
+  const text = await r.text();
+  let d;
+  try { d = JSON.parse(text); } catch { throw new Error("Comic Vine sent back a web page instead of data (usually its rate limit)"); }
+  if (d.status_code === 107) throw new Error("Comic Vine 429 rate limit");
   if (d.status_code !== 1) throw new Error(`Comic Vine: ${d.error}`);
   return d;
 }
+let cvLast = 0;
 const cvImg = img => {
   const url = img?.medium_url || img?.small_url || img?.original_url;
   const m = url && url.match(/^https:\/\/comicvine\.gamespot\.com\/a\/uploads\/(.+)$/);

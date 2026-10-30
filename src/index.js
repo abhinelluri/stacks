@@ -61,7 +61,23 @@ async function add(env, body) {
   if (kind === "comic") {
     const id = ids.series(ref), existing = await getItem(env, "series", id);
     if (existing) return { kind, doc: existing };
-    const d = String(ref).startsWith("mt:") ? await seriesDetailsMetron(env, f, String(ref).slice(3)) : await seriesDetails(env, f, ref);
+    let d;
+    if (String(ref).startsWith("mt:")) d = await seriesDetailsMetron(env, f, String(ref).slice(3));
+    else {
+      try { d = await seriesDetails(env, f, ref); }
+      catch (e) {
+        if (!env.METRON_USER || !body.title) throw e;
+        console.error("[stacks] Comic Vine add failed, trying Metron", e.message);
+        const hit = (await searchSeriesMetron(env, f, `${body.title}${body.year ? ` ${body.year}` : ""}`))[0];
+        if (!hit) throw e;
+        d = await seriesDetailsMetron(env, f, hit.ref.slice(3));
+        const mid = ids.series(hit.ref), had = await getItem(env, "series", mid);
+        if (had) return { kind, doc: had };
+        const doc = { id: mid, volume: null, status: "want", history: [], ...d, refreshed: now() };
+        await putItem(env, "series", mid, doc);
+        return { kind, doc };
+      }
+    }
     const doc = { id, volume: null, status: "want", history: [], ...d, refreshed: now() };
     await putItem(env, "series", id, doc);
     return { kind, doc };
@@ -75,8 +91,8 @@ function friendly(e, kind) {
   const src = { film: "TMDB", tv: "TMDB", book: "Open Library", comic: "the comics database" }[kind] || "the data source";
   if (/isn't set|aren't set/.test(m)) return `${m}. Add it with npx wrangler secret put, then try again.`;
   if (/ 401| 403|Invalid API Key/i.test(m)) return `${m.split(" ")[0]} rejected the key. Check it, then run npx wrangler secret put again.`;
-  if (/ 429/.test(m)) return `${src} is rate-limiting requests. Wait a minute and try again.`;
-  return `Couldn't reach ${src}. Try again in a moment.`;
+  if (/ 42[09]|rate limit/i.test(m)) return `${m.split(" ")[0] === "Comic" ? "Comic Vine" : src} is limiting requests right now. Wait a minute and try again.`;
+  return `Couldn't reach ${src} (${m}). Try again in a moment.`;
 }
 
 async function status(env) {
@@ -107,11 +123,12 @@ export default {
       if (path === "/api/sync" && method === "POST") return await handleSync(request, env);
       if (path === "/api/search" && method === "GET") {
         try { const r = await search(env, url.searchParams.get("kind"), url.searchParams.get("q")); return json(Array.isArray(r) ? { results: r } : r); }
-        catch (e) { return error(502, friendly(e, url.searchParams.get("kind"))); }
+        catch (e) { console.error("[stacks] search failed", url.searchParams.get("kind"), e.message); return error(502, friendly(e, url.searchParams.get("kind"))); }
       }
       if (path === "/api/add" && method === "POST") {
-        try { return json(await add(env, await request.json())); }
-        catch (e) { return error(502, friendly(e, "add")); }
+        const body = await request.json().catch(() => ({}));
+        try { return json(await add(env, body)); }
+        catch (e) { console.error("[stacks] add failed", JSON.stringify(body), e.message); return error(502, friendly(e, body.kind)); }
       }
       if (path === "/api/refresh" && method === "POST") {
         const { kind, id } = await request.json(), f = budgetFetch(45);
