@@ -311,3 +311,16 @@ body.locked .bottom, body.locked .fab, body.locked .tabs, body.locked .top-right
 .seg.three button{font-size:13px;line-height:1.2}
 .prio{display:inline-block;font:700 12px/1.6 var(--body);color:var(--paper);background:var(--ink);border-radius:999px;padding:0 7px;margin-right:6px;vertical-align:1px}
 .sheet .danger{margin-top:4px;border-top:1px solid var(--rule);padding-top:14px;justify-self:stretch;text-align:left}
+
+/* priority tiers: hot to cool */
+.t0{--tc:var(--rule)} .t1{--tc:var(--film)} .t2{--tc:var(--tv)} .t3{--tc:var(--comic)} .t4{--tc:var(--ink-3)} .t5{--tc:color-mix(in srgb,var(--ink-3) 50%,var(--paper))}
+.tier-groups{display:grid;gap:30px}
+.tier-group{display:grid;gap:12px}
+.tier-h{display:flex;align-items:center;gap:10px;font:700 17px var(--body);letter-spacing:0;padding-bottom:8px;border-bottom:2px solid var(--tc)}
+.tier-h i{width:12px;height:12px;border-radius:3px;background:var(--tc)}
+.tier-h small{font-weight:400;color:var(--ink-3);font-size:14px}
+.tier-chip::before{content:"";display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--tc);margin-right:7px;vertical-align:1px}
+.tier-chip[aria-pressed="true"]{background:var(--tc);border-color:var(--tc);color:var(--on-color)}
+.tier-chip[aria-pressed="true"]::before{background:var(--on-color)}
+.tops li[class*=" t"]{box-shadow:inset 4px 0 0 var(--tc)}
+.tier-sel{display:block;margin-top:4px;border:1px solid var(--rule);background:var(--paper);border-radius:999px;padding:3px 10px;font-size:13px;font-weight:700;color:var(--ink-2)}

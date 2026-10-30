@@ -60,26 +60,49 @@ function progress(k, x) {
 }
 const seasonRating = s => { const r = s.episodes.filter(e => e.rating != null).map(e => e.rating); return r.length ? Math.round(avg(r) * 2) / 2 : null; };
 const showRating = x => { const r = x.seasons.map(seasonRating).filter(v => v != null); return r.length ? Math.round(avg(r) * 2) / 2 : null; };
-function setStatus(k, x, s, d = today()) { x.status = s; x.history.push({ s, d }); if (s !== "want") delete x.priority; }
+function setStatus(k, x, s, d = today()) { x.status = s; x.history.push({ s, d }); if (s !== "want") { delete x.priority; delete x.tier; } }
 
-/* Want lists: ranked items first (#1 = read/watch next), then unranked, newest first */
+/* Want lists: grouped by priority tier, then your order within a tier, then newest first */
+const TIERS = [[1, "Top priority"], [2, "High"], [3, "Medium"], [4, "Low"], [5, "Someday"]];
+const tierName = t => TIERS.find(z => z[0] === t)?.[1] || "Not sorted";
 const wantList = k => (k === "film" ? D.watchlist : items(k).filter(x => x.status === "want"));
 const addedOn = (k, x) => (k === "film" ? x.added : [...x.history].reverse().find(h => h.s === "want")?.d) || "";
-const sortedWant = k => [...wantList(k)].sort((a, b) => (a.priority ?? 1e9) - (b.priority ?? 1e9) || addedOn(k, b).localeCompare(addedOn(k, a)));
+const sortedWant = k => [...wantList(k)].sort((a, b) => (a.tier || 9) - (b.tier || 9) || (a.priority ?? 1e9) - (b.priority ?? 1e9) || addedOn(k, b).localeCompare(addedOn(k, a)));
 const rankWant = ordered => ordered.forEach((x, i) => { x.priority = i + 1; });
-const prioBadge = x => (x.priority ? `<span class="prio">#${x.priority}</span>` : "");
+const tierChips = (cur, attr) => `<div class="controls">${TIERS.map(([t, l]) => `<button class="chip small tier-chip t${t}" ${attr}="${t}" aria-pressed="${cur === t}">${l}</button>`).join("")}</div>`;
+function setTier(x, t) { if (x.tier === t) delete x.tier; else x.tier = t; }
+
+/* The want shelf, one section per tier ("Top priority", "High", …), each in your chosen order */
+function groupedWant(k, itemHtml, cls) {
+  const list = sortedWant(k);
+  if (!list.some(x => x.tier)) return `<div class="${cls}">${list.map(itemHtml).join("")}</div>`;
+  return `<div class="tier-groups">${[...TIERS, [0, "Not sorted"]].map(([t, l]) => { const xs = list.filter(x => (x.tier || 0) === t); return xs.length ? `
+    <section class="tier-group t${t}"><h3 class="tier-h"><i></i>${l}<small>${xs.length}</small></h3><div class="${cls}">${xs.map(itemHtml).join("")}</div></section>` : ""; }).join("")}</div>`;
+}
+/* Edit mode: set each item's tier, and use the arrows to order items within a tier */
 function reorderHtml(k) {
-  return `<ol class="tops c-${k}">${sortedWant(k).map((x, n, all) => `<li class="filled"><span class="rank">${n + 1}</span>${cover(k, nameOf(k, x), "", { thumb: true, img: artOf(k, x) })}<span class="t"><b>${esc(nameOf(k, x))}</b><span>${esc(k === "book" ? x.authors[0] : x.year ?? "")}</span></span>
-    <span class="acts"><button data-rtop="${n}" aria-label="Move to top" ${n ? "" : "disabled"}>⤒</button><button data-rup="${n}" aria-label="Move up" ${n ? "" : "disabled"}>↑</button><button data-rdown="${n}" aria-label="Move down" ${n < all.length - 1 ? "" : "disabled"}>↓</button></span></li>`).join("")}</ol>`;
+  const list = sortedWant(k), same = (a, b) => (a?.tier || 0) === (b?.tier || 0);
+  return `<ol class="tops c-${k}">${list.map((x, n) => `<li class="filled t${x.tier || 0}"><span class="rank">${n + 1}</span>${cover(k, nameOf(k, x), "", { thumb: true, img: artOf(k, x) })}<span class="t"><b>${esc(nameOf(k, x))}</b>
+      <select class="tier-sel" data-tier-of="${n}" aria-label="Priority">${[[0, "Not sorted"], ...TIERS].map(([t, l]) => `<option value="${t}" ${(x.tier || 0) === t ? "selected" : ""}>${l}</option>`).join("")}</select></span>
+    <span class="acts"><button data-rtop="${n}" aria-label="Move to top of its tier" ${same(list[n - 1], x) ? "" : "disabled"}>⤒</button><button data-rup="${n}" aria-label="Move up" ${same(list[n - 1], x) ? "" : "disabled"}>↑</button><button data-rdown="${n}" aria-label="Move down" ${same(list[n + 1], x) ? "" : "disabled"}>↓</button></span></li>`).join("")}</ol>`;
 }
 function bindReorder(k, rerender) {
   const move = (from, to) => { const list = sortedWant(k); const [x] = list.splice(from, 1); list.splice(to, 0, x); rankWant(list); rerender(); };
-  $$("[data-rtop]").forEach(b => b.onclick = () => move(+b.dataset.rtop, 0));
+  $$("[data-rtop]").forEach(b => b.onclick = () => { const list = sortedWant(k), n = +b.dataset.rtop; move(n, list.findIndex(z => (z.tier || 0) === (list[n].tier || 0))); });
   $$("[data-rup]").forEach(b => b.onclick = () => move(+b.dataset.rup, +b.dataset.rup - 1));
   $$("[data-rdown]").forEach(b => b.onclick = () => move(+b.dataset.rdown, +b.dataset.rdown + 1));
+  $$("[data-tier-of]").forEach(sel => sel.onchange = () => { const x = sortedWant(k)[+sel.dataset.tierOf]; if (+sel.value) x.tier = +sel.value; else delete x.tier; detect(); rerender(); });
   const t = $("#reorder"); if (t) t.onclick = () => { state.reorder = !state.reorder; rerender(); };
 }
-const reorderBar = n => (n > 1 ? `<div class="controls"><button class="chip" id="reorder" aria-pressed="${state.reorder}">${state.reorder ? "Done" : "Set priority order"}</button>${state.reorder ? `<span class="hint">#1 is what you'll get to next. Use the arrows to reorder.</span>` : ""}</div>` : "");
+const reorderBar = n => (n ? `<div class="controls"><button class="chip" id="reorder" aria-pressed="${state.reorder}">${state.reorder ? "Done" : "Set priorities"}</button>${state.reorder ? `<span class="hint">Pick a priority for each, then use the arrows to order items within the same priority.</span>` : ""}</div>` : "");
+
+/* A watchlist film you log becomes a full film entry (posters and details carry over) */
+function ensureFilm(id) {
+  if (films[id]) return films[id];
+  const w = D.watchlist.find(z => z.id === id); if (!w) return null;
+  const f = { id, title: w.title, year: w.year, rating: null, liked: false, lb: null, tmdb: w.tmdb ?? null, poster: w.poster ?? null, runtime: w.runtime ?? null, directors: w.directors || [], cast: w.cast || [], genres: w.genres || [] };
+  D.films.push(f); films[id] = f; return f;
+}
 
 /* Remove something added by mistake: the item, its diary/progress, and any Top 10 spot */
 function removeEverywhere(k, id) {
@@ -111,7 +134,7 @@ function setBookStatus(b, s, d = today(), opts = {}) {
   if (["reading", "paused", "read", "dnf"].includes(s) && !r) { r = { start: d, end: null, outcome: null, rating: null, sessions: [] }; b.reads.push(r); }
   if (s === "read" || s === "dnf") { r.end = d; r.outcome = s; if (s === "read") { r.rating = opts.rating ?? null; if (r.rating != null) b.rating = r.rating; } }
   b.status = s; b.history.push({ s: opts.reread ? "reread" : s, d });
-  if (s !== "want") delete b.priority;
+  if (s !== "want") { delete b.priority; delete b.tier; }
 }
 function bookDays(b) {
   const out = [];
@@ -222,7 +245,7 @@ function renderFilms() {
   const rated = D.watches.filter(w => w.rating != null).map(w => w.rating), f = state.f;
   let body;
   if (state.filmTab === "watchlist") {
-    body = D.watchlist.length ? reorderBar(D.watchlist.length) + (state.reorder ? reorderHtml("film") : `<div class="grid">${sortedWant("film").map(w => `<button class="tile" data-wl="${esc(w.id)}">${cover("film", w.title, w.year, { img: w.poster })}<span class="t">${prioBadge(w)}${esc(w.title)}</span><p>${w.year}, added ${shortDate(w.added)}</p></button>`).join("")}</div>`)
+    body = D.watchlist.length ? reorderBar(D.watchlist.length) + (state.reorder ? reorderHtml("film") : groupedWant("film", w => `<button class="tile" data-wl="${esc(w.id)}">${cover("film", w.title, w.year, { img: w.poster })}<span class="t">${esc(w.title)}</span><p>${w.year}, added ${shortDate(w.added)}</p></button>`, "grid"))
       : `<div class="empty"><b>Nothing on your watchlist</b><p>Use + and choose "Want to watch" to add a film, or tap "Add to watchlist" on any film's page. Letterboxd's watchlist file can be imported too.</p></div>`;
   } else {
     const list = filteredWatches(), groups = {};
@@ -303,8 +326,9 @@ function openFilm(id) {
     <div class="controls">
       ${films[id] ? `<button class="toggle" id="like" aria-pressed="${m.liked}">♥ ${m.liked ? "Liked" : "Like"}</button>` : ""}
       <button class="toggle plain" id="wl" aria-pressed="${onWl}">${onWl ? "On watchlist" : "Add to watchlist"}</button>
-      ${films[id] ? `<button class="chip" id="again">${ws.length ? "Log a rewatch" : "Log it"}</button>` : ""}
+      <button class="chip" id="again">${ws.length ? "Log a rewatch" : "Log it"}</button>
     </div>
+    ${onWl ? `<div class="field"><span>Watchlist priority</span>${tierChips(D.watchlist.find(w => w.id === id).tier, "data-settier")}</div>` : ""}
     ${ws.length ? `<div class="field"><span>Watched ${ws.length} time${ws.length === 1 ? "" : "s"}</span>
       <ul class="timeline">${ws.map(w => `<li><span class="num">${longDate(w.date)}</span><span>${VENUE[w.venue]}${w.rewatch ? ", rewatch" : ""} ${stars(w.rating)}</span><button class="linkish" data-edit="${w.id}">Edit</button>${w.review ? `<p class="rv">${esc(w.review)}</p>` : ""}</li>`).join("")}</ul></div>` : ""}
     ${meta.cast.length ? `<div class="field"><span>Cast</span><p style="margin:0">${esc(meta.cast.slice(0, 8).join(", "))}</p></div>` : `<p class="hint">Poster, runtime, director and cast fill in once this film is matched to TMDB.</p>`}
@@ -312,9 +336,10 @@ function openFilm(id) {
   `, el => {
     bindRemove(el, "film", id, ws.length ? `its ${ws.length} diary entr${ws.length === 1 ? "y" : "ies"}` : "");
     const re = () => openFilm(id);
+    $$("[data-settier]", el).forEach(b => b.onclick = () => { setTier(D.watchlist.find(w => w.id === id), +b.dataset.settier); re(); });
     $("#like", el) && ($("#like", el).onclick = () => { m.liked = !m.liked; re(); });
     $("#wl", el).onclick = () => { if (onWl) D.watchlist = D.watchlist.filter(w => w.id !== id); else D.watchlist.unshift({ id, title: m.title, year: m.year, added: today(), poster: m.poster, tmdb: m.tmdb ?? null }); re(); };
-    $("#again", el) && ($("#again", el).onclick = () => openLog({ kind: "film", pick: id, title: m.title }));
+    $("#again", el).onclick = () => { ensureFilm(id); openLog({ kind: "film", pick: id, title: m.title }); };
     $$("[data-edit]", el).forEach(b => b.onclick = () => openLog({ edit: D.watches.find(w => w.id === b.dataset.edit) }));
   });
 }
@@ -346,16 +371,21 @@ function renderShelfPage(k) {
       : `<div class="empty"><b>Starting fresh</b><p>Use + to search for a series. Every issue, cover and release date fills in from Comic Vine, and new issues are added automatically as they come out.</p></div>`);
     else if (!list.length) body = chips + `<div class="empty"><p>${EMPTY[k][state.tab[k]]}</p></div>`;
     else if (want && state.reorder) body = chips + reorderBar(list.length) + reorderHtml(k);
-    else if (k === "book") body = chips + (want ? reorderBar(list.length) : "") + `<div class="grid">${list.map(b => { const last = b.history.at(-1), pct = b.status === "reading" ? bookPct(b) : null, n = b.reads.filter(r => r.outcome === "read").length; return `
-      <button class="tile c-book" data-open="book:${esc(b.id)}">${cover("book", b.title, b.authors[0], { img: b.cover })}<span class="t">${want ? prioBadge(b) : ""}${esc(b.title)}</span>
+    else if (want) body = chips + reorderBar(list.length) + groupedWant(k, x => itemHtml(x), k === "book" ? "grid" : "rows");
+    else if (k === "book") body = chips + `<div class="grid">${list.map(b => itemHtml(b)).join("")}</div>`;
+    else body = chips + `<div class="rows">${list.map(x => itemHtml(x)).join("")}</div>`;
+  }
+  function itemHtml(b) {
+    if (k === "book") { const last = b.history.at(-1), pct = b.status === "reading" ? bookPct(b) : null, n = b.reads.filter(r => r.outcome === "read").length; return `
+      <button class="tile c-book" data-open="book:${esc(b.id)}">${cover("book", b.title, b.authors[0], { img: b.cover })}<span class="t">${esc(b.title)}</span>
       ${pct != null ? `<div class="meter"><i style="width:${pct}%"></i></div>` : ""}
-      ${b.status === "read" ? stars(b.rating) : ""}<p>${b.format === "audiobook" ? "Audiobook. " : ""}${last ? `${VERB.book[last.s]} ${shortDate(last.d)}` : ""}${n > 1 ? `. Read ${n} times` : ""}</p></button>`; }).join("")}</div>`;
-    else body = chips + (want ? reorderBar(list.length) : "") + `<div class="rows">${list.map(x => { const p = progress(k, x), r = k === "tv" ? showRating(x) : null; return `
+      ${b.status === "read" ? stars(b.rating) : ""}<p>${b.format === "audiobook" ? "Audiobook. " : ""}${last ? `${VERB.book[last.s]} ${shortDate(last.d)}` : ""}${n > 1 ? `. Read ${n} times` : ""}</p></button>`; }
+    const x = b, p = progress(k, x), r = k === "tv" ? showRating(x) : null; return `
       <button class="row c-${k}" data-open="${k}:${esc(x.id)}">${cover(k, nameOf(k, x), "", { thumb: true, img: artOf(k, x) })}
-        <span>${want ? prioBadge(x) : ""}<b>${esc(nameOf(k, x))}</b> <span class="sub">${esc(subOf(k, x))}</span></span>
+        <span><b>${esc(nameOf(k, x))}</b> <span class="sub">${esc(subOf(k, x))}</span></span>
         <span class="count num">${p.done}/${p.total}${p.next ? `, next ${esc(p.next.label)}` : ""}${r != null ? ` ${stars(r)}` : ""}</span>
         <span class="cells" aria-hidden="true">${units(k, x).filter(u => !u.skip).slice(0, 160).map(u => `<i class="${u.done ? "r" : u.out ? "" : "f"}"></i>`).join("")}</span>
-      </button>`; }).join("")}</div>`;
+      </button>`;
   }
   $("#app").innerHTML = `<div class="view"><div class="page-head"><h1>${PLURAL[k]}</h1><div class="summary">${summary}</div>${top}</div>${body}</div>`;
   $$("[data-st]").forEach(b => b.onclick = () => { state.tab[k] = b.dataset.st; state.reorder = false; renderShelfPage(k); });
@@ -399,6 +429,7 @@ function openDetail(k, id) {
       ${k === "book" && x.rating != null ? `<p>${stars(x.rating)}</p>` : ""}${k === "tv" && showRating(x) != null ? `<p>Show average ${stars(showRating(x))}</p>` : ""}</div>
     </div>
     <div class="field"><span>Status</span><div class="controls">${STATUS[k].map(([s, l]) => `<button class="chip small" data-set="${s}" aria-pressed="${x.status === s}">${l}</button>`).join("")}</div></div>
+    ${x.status === "want" ? `<div class="field"><span>Priority</span>${tierChips(x.tier, "data-settier")}</div>` : ""}
     ${mid}
     ${k !== "book" && (x.tmdb || x.cv) ? `<button class="chip" id="refresh" style="justify-self:start">Check for new ${k === "tv" ? "episodes" : "issues"}</button>` : ""}
     <div class="field"><span>Status history</span>${x.history.length ? `<ul class="timeline">${[...x.history].reverse().map(h => `<li><span class="num">${longDate(h.d)}</span><span>${VERB[k][h.s]}</span><span></span></li>`).join("")}</ul>` : `<p class="hint">Status changes are dated from here on.</p>`}</div>
@@ -406,6 +437,7 @@ function openDetail(k, id) {
     <button class="danger" id="remove">Remove from Stacks</button>
   `, el => {
     const re = () => openDetail(k, id);
+    $$("[data-settier]", el).forEach(b => b.onclick = () => { setTier(x, +b.dataset.settier); re(); });
     { const n = k === "book" ? x.reads.length : progress(k, x).done; bindRemove(el, k, id, n ? (k === "book" ? "its reading history" : `${n} ${k === "tv" ? "watched episode" : "read issue"}${n === 1 ? "" : "s"}`) : ""); }
     $$("[data-set]", el).forEach(b => b.onclick = () => { if (x.status === b.dataset.set) return; k === "book" ? setBookStatus(x, b.dataset.set) : setStatus(k, x, b.dataset.set); toast(`Moved to ${STATUS[k].find(s => s[0] === b.dataset.set)[1]}`); re(); });
     const rf = $("#refresh", el);
@@ -651,7 +683,7 @@ function openLog(o = {}) {
 }
 function logResults() {
   const q = log.q.trim().toLowerCase(), k = log.kind; if (!q) return [];
-  if (k === "film") return D.films.filter(f => f.title.toLowerCase().includes(q)).slice(0, 8).map(f => ({ id: f.id, a: f.title, b: f.year }));
+  if (k === "film") return [...D.films, ...D.watchlist.filter(w => !films[w.id])].filter(f => f.title.toLowerCase().includes(q)).slice(0, 8).map(f => ({ id: f.id, a: f.title, b: films[f.id] ? f.year : `${f.year}, on your watchlist` }));
   return items(k).filter(x => (nameOf(k, x) + " " + (x.authors || []).join(" ")).toLowerCase().includes(q)).slice(0, 8)
     .map(x => ({ id: x.id, a: nameOf(k, x), b: k === "book" ? x.authors[0] : progress(k, x).next ? `next ${progress(k, x).next.label}` : "caught up" }));
 }
@@ -670,7 +702,7 @@ function renderLog() {
     <input class="search" id="log-q" type="search" autocomplete="off" ${log.edit ? "disabled" : ""} placeholder="${{ film: "Film title", tv: "Show title", book: "Book title or author", comic: "Series name" }[k]}" value="${esc(log.q)}" aria-label="Search">
     ${log.q && !log.pick ? resultsHtml(res) : ""}
     ${log.pick ? `
-      ${m === "want" ? `<button class="toggle plain" id="lg-top" aria-pressed="${!!log.top}" style="justify-self:start">${log.top ? "Top priority" : "Make it top priority"}</button>` : ""}
+      ${m === "want" ? `<div class="field"><span>Priority (optional)</span>${tierChips(log.tier ?? (k === "film" ? D.watchlist.find(w => w.id === log.pick)?.tier : x?.status === "want" ? x.tier : undefined), "data-lgtier")}</div>` : ""}
       ${m === "want" && cur && x.status !== "want" ? `<p class="hint">It's in ${esc(cur)} now. This moves it to ${WANT[k]}.</p>` : ""}
       ${m === "status" ? `<div class="field"><span>Move to${cur ? ` (now in ${esc(cur)})` : ""}</span><div class="controls">${STATUS[k].filter(([v]) => v !== "want").map(([v, l]) => `<button class="chip small" data-st2="${v}" aria-pressed="${log.status === v}">${l}</button>`).join("")}</div></div>` : ""}
       ${k === "book" && logging ? `<div class="field"><span>What happened</span><div class="controls">${BOOK_ACTS.map(([a, l]) => `<button class="chip small" data-act="${a}" aria-pressed="${log.act === a}">${l}</button>`).join("")}</div></div>
@@ -688,10 +720,10 @@ function renderLog() {
   `, s => {
     const keep = () => { const d = $("#log-date"), n = $("#log-note"); if (d) log.date = d.value; if (n) log.note = n.value; };
     const re = () => { keep(); renderLog(); };
-    $$("[data-k]", s).forEach(b => b.onclick = () => { log.kind = b.dataset.k; log.pick = null; log.q = ""; log.remote = null; log.mode = defaultMode(b.dataset.k); log.status = null; renderLog(); $("#log-q").focus(); });
+    $$("[data-k]", s).forEach(b => b.onclick = () => { log.kind = b.dataset.k; log.pick = null; log.q = ""; log.remote = null; log.mode = defaultMode(b.dataset.k); log.status = null; log.tier = undefined; renderLog(); $("#log-q").focus(); });
     $$("[data-mode]", s).forEach(b => b.onclick = () => { log.mode = b.dataset.mode; re(); });
     $("#log-q").oninput = e => { log.q = e.target.value; log.pick = null; queueRemote(); const p = e.target.selectionStart; renderLog(); const i = $("#log-q"); i.focus(); i.setSelectionRange(p, p); };
-    $$("[data-p]", s).forEach(b => b.onclick = () => { log.pick = b.dataset.p; log.q = b.querySelector("b").textContent; if (k === "film") { log.rewatch = D.watches.some(w => w.film === log.pick); log.liked = films[log.pick].liked; } renderLog(); });
+    $$("[data-p]", s).forEach(b => b.onclick = () => { log.pick = b.dataset.p; log.q = b.querySelector("b").textContent; if (k === "film") { ensureFilm(log.pick); log.rewatch = D.watches.some(w => w.film === log.pick); log.liked = films[log.pick].liked; } renderLog(); });
     $$("[data-r]", s).forEach(b => b.onclick = () => pickRemote(b.dataset.r));
     $$("[data-v]", s).forEach(b => b.onclick = () => { log.venue = b.dataset.v; re(); });
     $$("[data-act]", s).forEach(b => b.onclick = () => { log.act = b.dataset.act; re(); });
@@ -700,15 +732,15 @@ function renderLog() {
     const on = (id, fn) => { const el = $(id, s); if (el) el.onclick = fn; };
     on("#lg-like", () => { log.liked = !log.liked; re(); });
     on("#lg-re", () => { log.rewatch = !log.rewatch; re(); });
-    on("#lg-top", () => { log.top = !log.top; re(); });
+    $$("[data-lgtier]", s).forEach(b => b.onclick = () => { log.tier = log.tier === +b.dataset.lgtier ? 0 : +b.dataset.lgtier; re(); });
     if ($("#log-stars", s)) bindStars("log-stars", () => log.rating, v => log.rating = v, re);
     on("#log-del", () => { D.watches = D.watches.filter(w => w !== log.edit); toast("Entry deleted"); closeSheet(); });
     on("#log-save", () => {
       keep();
       if (k === "film" && log.mode === "want") {
         const m = films[log.pick]; if (!D.watchlist.some(w => w.id === m.id)) D.watchlist.unshift({ id: m.id, title: m.title, year: m.year, added: today(), poster: m.poster, tmdb: m.tmdb ?? null });
-        if (log.top) { const w = D.watchlist.find(z => z.id === m.id); rankWant([w, ...sortedWant("film").filter(z => z !== w)]); }
-        toast(log.top ? "Added to the top of your watchlist" : "Added to watchlist"); return closeSheet();
+        const w = D.watchlist.find(z => z.id === m.id); if (log.tier != null) { if (log.tier) w.tier = log.tier; else delete w.tier; }
+        toast(w.tier ? `Added to your watchlist as ${tierName(w.tier)}` : "Added to watchlist"); return closeSheet();
       }
       if (k === "film") {
         films[log.pick].liked = log.liked;
@@ -721,8 +753,8 @@ function renderLog() {
       }
       if (m === "want") {
         if (x.status !== "want" || !x.history.some(h => h.s === "want")) k === "book" ? setBookStatus(x, "want", log.date) : setStatus(k, x, "want", log.date);
-        if (log.top) rankWant([x, ...sortedWant(k).filter(z => z !== x)]);
-        toast(`Added to ${WANT[k]}`); return closeSheet();
+        if (log.tier != null) { if (log.tier) x.tier = log.tier; else delete x.tier; }
+        toast(x.tier ? `Added to ${WANT[k]} as ${tierName(x.tier)}` : `Added to ${WANT[k]}`); return closeSheet();
       }
       if (m === "status") {
         k === "book" ? setBookStatus(x, log.status, log.date) : setStatus(k, x, log.status, log.date);
