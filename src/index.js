@@ -1,7 +1,7 @@
 import { json, error, now, budgetFetch, getMeta } from "./util.js";
 import { handleAuth, getSession } from "./auth.js";
 import { getLibrary, handleSync, getItem, getItems, putItem } from "./store.js";
-import { searchFilms, filmDetails, searchShows, showDetails, searchBooks, searchSeries, seriesDetails, searchSeriesMetron, seriesDetailsMetron, ids } from "./providers.js";
+import { searchFilms, filmDetails, searchShows, showDetails, searchBooks, searchSeries, seriesDetails, searchSeriesMetron, seriesDetailsMetron, searchComics, normName, ids } from "./providers.js";
 import { backfill, daily, backup, refreshShow, refreshSeries } from "./jobs.js";
 
 const IMG_SOURCES = {
@@ -27,14 +27,13 @@ async function image(request, env, ctx, src, rest) {
 }
 
 async function search(env, kind, q) {
-  const f = budgetFetch(5);
+  const f = budgetFetch(8);
   if (!q || q.trim().length < 2) return [];
   if (kind === "film") return searchFilms(env, f, q);
   if (kind === "tv") return searchShows(env, f, q);
   if (kind === "book") return searchBooks(env, f, q);
   if (kind === "comic") {                         // Comic Vine when its key is set, otherwise Metron
-    if (env.COMICVINE_KEY) { try { return { source: "Comic Vine", results: await searchSeries(env, f, q) }; } catch (e) { if (!env.METRON_USER) throw e; } }
-    return { source: "Metron", results: await searchSeriesMetron(env, f, q) };
+    return { source: "Comic Vine and Metron", results: await searchComics(env, f, q) };
   }
   throw new Error("Unknown kind");
 }
@@ -68,7 +67,8 @@ async function add(env, body) {
       catch (e) {
         if (!env.METRON_USER || !body.title) throw e;
         console.error("[stacks] Comic Vine add failed, trying Metron", e.message);
-        const hit = (await searchSeriesMetron(env, f, `${body.title}${body.year ? ` ${body.year}` : ""}`))[0];
+        const hits = await searchSeriesMetron(env, f, `${body.title}${body.year ? ` ${body.year}` : ""}`);
+        const hit = hits.find(h => normName(h.title) === normName(body.title) && (!body.year || h.year === body.year)) || hits[0];
         if (!hit) throw e;
         d = await seriesDetailsMetron(env, f, hit.ref.slice(3));
         const mid = ids.series(hit.ref), had = await getItem(env, "series", mid);

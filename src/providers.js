@@ -127,12 +127,54 @@ const cvImg = img => {
 const mtImg = url => { const m = url && String(url).match(/^https:\/\/static\.metron\.cloud\/(.+)$/); return m ? `/img/mt/${m[1]}` : null; };
 
 /* "Captain America 2025" -> name "Captain America", year 2025 */
-const splitYear = q => { const m = String(q).trim().match(/^(.*?)\s*\(?((?:19|20)\d{2})\)?$/); return m && m[1] ? { name: m[1], year: +m[2] } : { name: String(q).trim(), year: null }; };
+/* Understand comic searches like "X-Men 2024", "X-Men (2024)", "X-Men vol. 8", "Uncanny X-Men v6" */
+export function parseComicQuery(q) {
+  let name = String(q).trim(), year = null, volume = null;
+  name = name.replace(/\(?\b((?:19|20)\d{2})\)?/, (_, y) => { year = +y; return " "; });
+  name = name.replace(/\b(?:vol(?:ume)?\.?|v)\s*(\d{1,2})\b/i, (_, v) => { volume = +v; return " "; });
+  name = name.replace(/\s+/g, " ").replace(/[\s,#-]+$/, "").trim();
+  return { name, year, volume };
+}
+export const normName = s => String(s || "").toLowerCase().replace(/^the\s+/, "").replace(/\s*\(\d{4}\)\s*$/, "").replace(/[^a-z0-9]/g, "");
+
+/* Comic Vine: every volume whose name contains the words, newest first */
 export async function searchSeries(env, f, q) {
-  const fields = "id,name,start_year,publisher,count_of_issues,image", { name, year } = splitYear(q);
+  const fields = "id,name,start_year,publisher,count_of_issues,image", { name } = parseComicQuery(q);
   let d = await cv(env, f, "/volumes/", { filter: `name:${name}`, sort: "start_year:desc", limit: "100", field_list: fields });
   if (!d.results.length) d = await cv(env, f, "/search/", { resources: "volume", query: name, limit: "30", field_list: fields });
-  return d.results.filter(v => v.count_of_issues > 0 && (!year || +v.start_year === year)).slice(0, 60).map(v => ({ ref: String(v.id), title: v.name, year: +v.start_year || null, sub: [v.publisher?.name, v.start_year, `${v.count_of_issues} issues`].filter(Boolean).join(", "), cover: cvImg(v.image) }));
+  return d.results.filter(v => v.count_of_issues > 0).map(v => ({ ref: String(v.id), title: v.name, year: +v.start_year || null, volume: null, publisher: v.publisher?.name || "", issues: v.count_of_issues, cover: cvImg(v.image), source: "Comic Vine" }));
+}
+
+/* Search both databases, then rank: exact title first, then the year / volume you asked for, then newest */
+export async function searchComics(env, f, q) {
+  const want = parseComicQuery(q), key = normName(want.name);
+  if (!key) return [];
+  const tasks = [];
+  if (env.COMICVINE_KEY) tasks.push(searchSeries(env, f, q));
+  if (env.METRON_USER && env.METRON_PASS) tasks.push(searchSeriesMetron(env, f, q));
+  if (!tasks.length) throw new Error("COMICVINE_KEY isn't set");
+  const settled = await Promise.allSettled(tasks);
+  const all = settled.flatMap(r => (r.status === "fulfilled" ? r.value : []));
+  if (!all.length && settled.every(r => r.status === "rejected")) throw settled[0].reason;
+
+  /* one entry per run: Comic Vine's (better covers) enriched with Metron's volume number and issue count */
+  const runs = new Map();
+  for (const r of all) {
+    const k = `${normName(r.title)}|${r.year}`, have = runs.get(k);
+    if (!have) { runs.set(k, { ...r }); continue; }
+    if (r.source === "Comic Vine" && have.source === "Metron") runs.set(k, { ...r, volume: have.volume, issues: Math.max(r.issues || 0, have.issues || 0), alt: have.ref });
+    else { have.volume ??= r.volume; have.issues = Math.max(have.issues || 0, r.issues || 0); have.alt ??= r.ref; }
+  }
+  const score = r => {
+    const n = normName(r.title);
+    return (n === key ? 1000 : n.startsWith(key) ? 400 : n.includes(key) ? 150 : -2000)
+      + (want.year ? (r.year === want.year ? 600 : -800) : 0)
+      + (want.volume ? (r.volume === want.volume ? 600 : r.volume ? -800 : 0) : 0);
+  };
+  const list = [...runs.values()].map(r => ({ ...r, _s: score(r) })).sort((a, b) => b._s - a._s || (b.year || 0) - (a.year || 0) || (b.issues || 0) - (a.issues || 0));
+  return list.slice(0, 60).map(({ _s, ...r }) => ({
+    ...r, sub: [r.publisher, r.year, r.volume ? `vol. ${r.volume}` : "", r.issues ? `${r.issues} issues` : ""].filter(Boolean).join(", "),
+  }));
 }
 /* Fetch a series and all its issues. `existing` keeps your read dates and ratings. */
 export async function seriesDetails(env, f, cvId, existing = null) {
@@ -176,11 +218,19 @@ async function metron(env, f, path, params = {}) {
 }
 /* Metron series search, newest runs first. refs look like "mt:123" */
 export async function searchSeriesMetron(env, f, q) {
-  const { name, year } = splitYear(q);
-  const d = await metron(env, f, "/series/", { name, ...(year ? { year_began: year } : {}) });
-  return (d.results || []).sort((a, b) => (b.year_began || 0) - (a.year_began || 0)).slice(0, 60).map(s => ({
+  const { name, year, volume } = parseComicQuery(q);
+  const params = { name, ...(year ? { year_began: year } : {}), ...(volume ? { volume } : {}) };
+  let rows = [], page = 1;
+  while (page <= 4) {
+    const d = await metron(env, f, "/series/", { ...params, page });
+    rows.push(...(d.results || []));
+    if (!d.next) break;
+    page++;
+  }
+  if (!rows.length && (year || volume)) rows = (await metron(env, f, "/series/", { name })).results || [];   // tolerate wrong year/volume guesses
+  return rows.map(s => ({
     ref: `mt:${s.id}`, title: String(s.series || s.name || "").replace(/\s+\(\d{4}\)$/, ""), year: s.year_began || null,
-    sub: [s.year_began, s.volume ? `vol. ${s.volume}` : "", s.issue_count != null ? `${s.issue_count} issues` : ""].filter(Boolean).join(", "), cover: null,
+    volume: s.volume || null, publisher: s.publisher?.name || "", issues: s.issue_count ?? null, cover: null, source: "Metron",
   }));
 }
 /* A Metron series with every issue (store dates, covers). `existing` keeps your read dates and ratings. */

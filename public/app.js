@@ -896,9 +896,9 @@ function resultsHtml(res) {
     ${res.length ? `<h4>In your library</h4>${res.map(r => `<button data-p="${esc(r.id)}"><b>${esc(r.a)}</b><span>${esc(r.b)}</span></button>`).join("")}` : ""}
     ${rem?.loading ? `<p class="hint">Searching ${SOURCE[kind]}…</p>` : ""}
     ${rem?.error ? `<p class="hint">${esc(rem.error)}</p>` : ""}
-    ${remote.length ? `<h4>From ${rem.source || SOURCE[kind]}${kind === "comic" ? `, ${remote.length} run${remote.length === 1 ? "" : "s"}, newest first` : ""}</h4>${remote.map(r => `<button data-r="${esc(r.ref)}"><span class="rl">${r.poster || r.cover ? `<img src="${esc(r.poster || r.cover)}" alt="" loading="lazy" onerror="this.remove()">` : ""}<b>${esc(r.title)}</b></span><span>${esc(r.sub ?? "")}</span></button>`).join("")}` : ""}
+    ${remote.length ? `<h4>From ${rem.source || SOURCE[kind]}${kind === "comic" ? `, ${remote.length} run${remote.length === 1 ? "" : "s"}, best match first` : ""}</h4>${remote.map(r => `<button data-r="${esc(r.ref)}"><span class="rl">${r.poster || r.cover ? `<img src="${esc(r.poster || r.cover)}" alt="" loading="lazy" onerror="this.remove()">` : ""}<b>${esc(r.title)}</b></span><span>${esc(r.sub ?? "")}</span></button>`).join("")}` : ""}
     ${!res.length && rem?.results && !remote.length ? `<p class="hint">No matches. Try a different spelling.</p>` : ""}
-    ${kind === "comic" && remote.length > 8 ? `<p class="hint">Looking for one run? Add its start year, like "Captain America 2025".</p>` : ""}
+    ${kind === "comic" && remote.length > 8 ? `<p class="hint">Looking for one run? Add its start year or volume, like "X-Men 2024" or "X-Men vol. 8".</p>` : ""}
   </div>`;
 }
 async function pickRemote(ref) {
