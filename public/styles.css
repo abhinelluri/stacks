@@ -223,7 +223,7 @@ select.sel{border:1px solid var(--rule);background:var(--card);border-radius:999
 .seg.two{grid-template-columns:1fr 1fr}
 .seg button{border:0;background:none;border-radius:999px;padding:7px 4px;font-weight:700;color:var(--ink-2)}
 .seg button[aria-pressed="true"]{background:var(--card);color:var(--ink);box-shadow:0 1px 2px color-mix(in srgb,var(--ink) 20%,transparent)}
-.results{display:grid;gap:2px;max-height:240px;overflow:auto}
+.results{display:grid;gap:2px}
 .results button{display:flex;justify-content:space-between;gap:10px;padding:9px 10px;border:0;border-radius:8px;background:none;text-align:left}
 .results button:hover{background:var(--paper)}
 .results span{color:var(--ink-3);font-size:14px}

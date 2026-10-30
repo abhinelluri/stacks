@@ -753,7 +753,7 @@ let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTime
 
 /* ================= LIVE APP: sync, offline, sign-in, settings, search ================= */
 const KIND_OF = { film: "film", tv: "show", book: "book", comic: "series" };      // UI kind -> stored kind
-const SOURCE = { film: "TMDB", tv: "TMDB", book: "Open Library", comic: "Comic Vine" };
+const SOURCE = { film: "TMDB", tv: "TMDB", book: "Open Library", comic: "comic databases" };
 
 /* ---- tiny IndexedDB key-value store for the offline copy and unsent changes ---- */
 const idb = (() => {
@@ -873,7 +873,7 @@ function queueRemote() {
   if (!navigator.onLine) { log.remote = { error: "You're offline, so only your library is searchable." }; return; }
   log.remote = { loading: true };
   remoteTimer = setTimeout(async () => {
-    try { const r = await api(`/api/search?kind=${kind}&q=${encodeURIComponent(q)}`); if (log && log.q.trim() === q && log.kind === kind) { log.remote = { results: r.results }; keepFocus(renderLog); } }
+    try { const r = await api(`/api/search?kind=${kind}&q=${encodeURIComponent(q)}`); if (log && log.q.trim() === q && log.kind === kind) { log.remote = { results: r.results, source: r.source }; keepFocus(renderLog); } }
     catch (e) { if (log && log.q.trim() === q) { log.remote = { error: e.message }; keepFocus(renderLog); } }
   }, 350);
 }
@@ -886,7 +886,7 @@ function keepFocus(fn) {
 function inLibrary(kind, r) {
   if (kind === "film") return D.films.some(f => String(f.tmdb) === r.ref);
   if (kind === "tv") return D.shows.some(s => String(s.tmdb) === r.ref);
-  if (kind === "comic") return D.series.some(s => String(s.cv) === r.ref);
+  if (kind === "comic") return D.series.some(s => String(s.cv) === r.ref || `mt:${s.metron}` === r.ref);
   return D.books.some(b => b.olKey === r.ref || (b.title.toLowerCase() === r.title.toLowerCase() && (b.authors[0] || "") === (r.authors?.[0] || "")));
 }
 function resultsHtml(res) {
@@ -896,8 +896,9 @@ function resultsHtml(res) {
     ${res.length ? `<h4>In your library</h4>${res.map(r => `<button data-p="${esc(r.id)}"><b>${esc(r.a)}</b><span>${esc(r.b)}</span></button>`).join("")}` : ""}
     ${rem?.loading ? `<p class="hint">Searching ${SOURCE[kind]}…</p>` : ""}
     ${rem?.error ? `<p class="hint">${esc(rem.error)}</p>` : ""}
-    ${remote.length ? `<h4>From ${SOURCE[kind]}</h4>${remote.map(r => `<button data-r="${esc(r.ref)}"><span class="rl">${r.poster || r.cover ? `<img src="${esc(r.poster || r.cover)}" alt="" loading="lazy" onerror="this.remove()">` : ""}<b>${esc(r.title)}</b></span><span>${esc(r.sub ?? "")}</span></button>`).join("")}` : ""}
+    ${remote.length ? `<h4>From ${rem.source || SOURCE[kind]}${kind === "comic" ? `, ${remote.length} run${remote.length === 1 ? "" : "s"}, newest first` : ""}</h4>${remote.map(r => `<button data-r="${esc(r.ref)}"><span class="rl">${r.poster || r.cover ? `<img src="${esc(r.poster || r.cover)}" alt="" loading="lazy" onerror="this.remove()">` : ""}<b>${esc(r.title)}</b></span><span>${esc(r.sub ?? "")}</span></button>`).join("")}` : ""}
     ${!res.length && rem?.results && !remote.length ? `<p class="hint">No matches. Try a different spelling.</p>` : ""}
+    ${kind === "comic" && remote.length > 8 ? `<p class="hint">Looking for one run? Add its start year, like "Captain America 2025".</p>` : ""}
   </div>`;
 }
 async function pickRemote(ref) {

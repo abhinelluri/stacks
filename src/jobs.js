@@ -1,7 +1,7 @@
 /* Scheduled jobs. Each run stays inside the free plan: few outbound requests, small batches. */
 import { budgetFetch, now, today, getMeta, setMeta } from "./util.js";
 import { getItem, putItem, getLibrary } from "./store.js";
-import { matchFilm, filmDetails, bookExtras, showDetails, seriesDetails, upcomingIssues, issueOrder } from "./providers.js";
+import { matchFilm, filmDetails, bookExtras, showDetails, seriesDetails, seriesDetailsMetron, upcomingIssues, issueOrder } from "./providers.js";
 
 const log = (...a) => console.log("[stacks]", ...a);
 
@@ -96,6 +96,9 @@ export async function refreshSeries(env, f, id) {
   if (fresh.cv && env.COMICVINE_KEY) {
     const d = await seriesDetails(env, f, fresh.cv, fresh);
     doc = { ...doc, cover: d.cover || doc.cover, ongoing: d.ongoing, end: d.end, issues: d.issues };
+  } else if (!fresh.cv && fresh.metron && env.METRON_USER) {
+    const d = await seriesDetailsMetron(env, f, fresh.metron, fresh);
+    doc = { ...doc, cover: doc.cover || d.cover, ongoing: d.ongoing, end: d.end, issues: d.issues };
   }
   if (env.METRON_USER && env.METRON_PASS && doc.ongoing !== false) {
     try {

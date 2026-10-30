@@ -1,13 +1,14 @@
 import { json, error, now, budgetFetch, getMeta } from "./util.js";
 import { handleAuth, getSession } from "./auth.js";
 import { getLibrary, handleSync, getItem, getItems, putItem } from "./store.js";
-import { searchFilms, filmDetails, searchShows, showDetails, searchBooks, searchSeries, seriesDetails, ids } from "./providers.js";
+import { searchFilms, filmDetails, searchShows, showDetails, searchBooks, searchSeries, seriesDetails, searchSeriesMetron, seriesDetailsMetron, ids } from "./providers.js";
 import { backfill, daily, backup, refreshShow, refreshSeries } from "./jobs.js";
 
 const IMG_SOURCES = {
   tmdb: rest => /^(w92|w154|w185|w342|w500|w780|original)\/[\w-]+\.(jpg|png|webp)$/.test(rest) && `https://image.tmdb.org/t/p/${rest}`,
   ol: rest => /^\d+$/.test(rest) && `https://covers.openlibrary.org/b/id/${rest}-L.jpg`,
   cv: rest => /^[\w\-./%]+$/.test(rest) && !rest.includes("..") && `https://comicvine.gamespot.com/a/uploads/${rest}`,
+  mt: rest => /^[\w\-./%]+$/.test(rest) && !rest.includes("..") && `https://static.metron.cloud/${rest}`,
 };
 
 /* Cover art is copied into KV the first time it's shown, so it keeps working if a source goes down */
@@ -31,7 +32,10 @@ async function search(env, kind, q) {
   if (kind === "film") return searchFilms(env, f, q);
   if (kind === "tv") return searchShows(env, f, q);
   if (kind === "book") return searchBooks(env, f, q);
-  if (kind === "comic") return searchSeries(env, f, q);
+  if (kind === "comic") {                         // Comic Vine when its key is set, otherwise Metron
+    if (env.COMICVINE_KEY) { try { return { source: "Comic Vine", results: await searchSeries(env, f, q) }; } catch (e) { if (!env.METRON_USER) throw e; } }
+    return { source: "Metron", results: await searchSeriesMetron(env, f, q) };
+  }
   throw new Error("Unknown kind");
 }
 
@@ -57,7 +61,7 @@ async function add(env, body) {
   if (kind === "comic") {
     const id = ids.series(ref), existing = await getItem(env, "series", id);
     if (existing) return { kind, doc: existing };
-    const d = await seriesDetails(env, f, ref);
+    const d = String(ref).startsWith("mt:") ? await seriesDetailsMetron(env, f, String(ref).slice(3)) : await seriesDetails(env, f, ref);
     const doc = { id, volume: null, status: "want", history: [], ...d, refreshed: now() };
     await putItem(env, "series", id, doc);
     return { kind, doc };
@@ -68,7 +72,7 @@ async function add(env, body) {
 /* Turn provider failures into something you can act on */
 function friendly(e, kind) {
   const m = e.message || "";
-  const src = { film: "TMDB", tv: "TMDB", book: "Open Library", comic: "Comic Vine" }[kind] || "the data source";
+  const src = { film: "TMDB", tv: "TMDB", book: "Open Library", comic: "the comics database" }[kind] || "the data source";
   if (/isn't set|aren't set/.test(m)) return `${m}. Add it with npx wrangler secret put, then try again.`;
   if (/ 401| 403|Invalid API Key/i.test(m)) return `${m.split(" ")[0]} rejected the key. Check it, then run npx wrangler secret put again.`;
   if (/ 429/.test(m)) return `${src} is rate-limiting requests. Wait a minute and try again.`;
@@ -96,13 +100,13 @@ export default {
         if (!(await getSession(request, env))) return error(401, "Sign in first.");
         if (method !== "GET" && request.headers.get("x-stacks") !== "1") return error(403, "Missing request header");
       }
-      const img = path.match(/^\/img\/(tmdb|ol|cv)\/(.+)$/);
+      const img = path.match(/^\/img\/(tmdb|ol|cv|mt)\/(.+)$/);
       if (img && method === "GET") return await image(request, env, ctx, img[1], img[2]);
 
       if (path === "/api/library" && method === "GET") return json(await getLibrary(env, +url.searchParams.get("since") || 0));
       if (path === "/api/sync" && method === "POST") return await handleSync(request, env);
       if (path === "/api/search" && method === "GET") {
-        try { return json({ results: await search(env, url.searchParams.get("kind"), url.searchParams.get("q")) }); }
+        try { const r = await search(env, url.searchParams.get("kind"), url.searchParams.get("q")); return json(Array.isArray(r) ? { results: r } : r); }
         catch (e) { return error(502, friendly(e, url.searchParams.get("kind"))); }
       }
       if (path === "/api/add" && method === "POST") {
@@ -134,10 +138,9 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    if (event.cron.startsWith("*/5")) ctx.waitUntil(backfill(env));
-    else if (event.cron.startsWith("30 13")) ctx.waitUntil(daily(env));
-    else ctx.waitUntil(backup(env));
+    if (event.cron.startsWith("30 13")) ctx.waitUntil(daily(env));
+    else if (event.cron.includes("SUN")) ctx.waitUntil(backup(env));
+    else ctx.waitUntil(backfill(env));          // the frequent matching job, every 1 or 5 minutes
   },
 };
-
 

@@ -115,10 +115,15 @@ const cvImg = img => {
   const m = url && url.match(/^https:\/\/comicvine\.gamespot\.com\/a\/uploads\/(.+)$/);
   return m && !/6373148-blank/.test(url) ? `/img/cv/${m[1]}` : null;
 };
+const mtImg = url => { const m = url && String(url).match(/^https:\/\/static\.metron\.cloud\/(.+)$/); return m ? `/img/mt/${m[1]}` : null; };
 
+/* "Captain America 2025" -> name "Captain America", year 2025 */
+const splitYear = q => { const m = String(q).trim().match(/^(.*?)\s*\(?((?:19|20)\d{2})\)?$/); return m && m[1] ? { name: m[1], year: +m[2] } : { name: String(q).trim(), year: null }; };
 export async function searchSeries(env, f, q) {
-  const d = await cv(env, f, "/search/", { resources: "volume", query: q, limit: "10", field_list: "id,name,start_year,publisher,count_of_issues,image" });
-  return d.results.map(v => ({ ref: String(v.id), title: v.name, year: +v.start_year || null, sub: [v.publisher?.name, v.start_year, `${v.count_of_issues} issues`].filter(Boolean).join(", "), cover: cvImg(v.image) }));
+  const fields = "id,name,start_year,publisher,count_of_issues,image", { name, year } = splitYear(q);
+  let d = await cv(env, f, "/volumes/", { filter: `name:${name}`, sort: "start_year:desc", limit: "100", field_list: fields });
+  if (!d.results.length) d = await cv(env, f, "/search/", { resources: "volume", query: name, limit: "30", field_list: fields });
+  return d.results.filter(v => v.count_of_issues > 0 && (!year || +v.start_year === year)).slice(0, 60).map(v => ({ ref: String(v.id), title: v.name, year: +v.start_year || null, sub: [v.publisher?.name, v.start_year, `${v.count_of_issues} issues`].filter(Boolean).join(", "), cover: cvImg(v.image) }));
 }
 /* Fetch a series and all its issues. `existing` keeps your read dates and ratings. */
 export async function seriesDetails(env, f, cvId, existing = null) {
@@ -160,6 +165,40 @@ async function metron(env, f, path, params = {}) {
   if (!r.ok) throw new Error(`Metron ${r.status}`);
   return r.json();
 }
+/* Metron series search, newest runs first. refs look like "mt:123" */
+export async function searchSeriesMetron(env, f, q) {
+  const { name, year } = splitYear(q);
+  const d = await metron(env, f, "/series/", { name, ...(year ? { year_began: year } : {}) });
+  return (d.results || []).sort((a, b) => (b.year_began || 0) - (a.year_began || 0)).slice(0, 60).map(s => ({
+    ref: `mt:${s.id}`, title: String(s.series || s.name || "").replace(/\s+\(\d{4}\)$/, ""), year: s.year_began || null,
+    sub: [s.year_began, s.volume ? `vol. ${s.volume}` : "", s.issue_count != null ? `${s.issue_count} issues` : ""].filter(Boolean).join(", "), cover: null,
+  }));
+}
+/* A Metron series with every issue (store dates, covers). `existing` keeps your read dates and ratings. */
+export async function seriesDetailsMetron(env, f, id, existing = null) {
+  const s = await metron(env, f, `/series/${id}/`);
+  const issues = [];
+  let page = 1;
+  while (page < 40) {
+    if (f.left && f.left() < 2) break;
+    const d = await metron(env, f, "/issue/", { series_id: id, page });
+    issues.push(...(d.results || []));
+    if (!d.next) break;
+    page++;
+  }
+  const prev = new Map((existing?.issues || []).map(i => [String(i.n), i]));
+  const merged = issues.map(i => { const p = prev.get(String(i.number)) || {}; return { n: String(i.number), title: "", released: i.store_date || i.cover_date || p.released || null, cover: mtImg(i.image) || p.cover || null, read: p.read ?? null, rating: p.rating ?? null }; });
+  for (const [n, p] of prev) if (!merged.some(i => i.n === n)) merged.push(p);
+  merged.sort(issueOrder);
+  const last = merged.filter(i => i.released && i.released <= today()).at(-1);
+  const recent = last && (Date.now() - new Date(last.released)) / 864e5 < 150;
+  return {
+    metron: s.id, name: String(s.name || s.series || "").replace(/\s+\(\d{4}\)$/, ""), volume: s.volume > 1 ? s.volume : null, start: s.year_began || null,
+    publisher: s.publisher?.name || "", cover: merged.find(i => i.cover)?.cover || null, issues: merged,
+    ongoing: !s.year_end || !!recent || merged.some(i => i.released > today()), end: s.year_end || null,
+  };
+}
+
 /* Issues of a series with a store date after today. Returns [{n, released}] */
 export async function upcomingIssues(env, f, series) {
   let id = series.metron;
@@ -169,7 +208,7 @@ export async function upcomingIssues(env, f, series) {
     if (!id) return { metron: null, issues: [] };
   }
   const d = await metron(env, f, "/issue/", { series_id: id, store_date_range_after: today() });
-  return { metron: id, issues: (d.results || []).map(i => ({ n: String(i.number), released: i.store_date || i.cover_date, cover: null })) };
+  return { metron: id, issues: (d.results || []).map(i => ({ n: String(i.number), released: i.store_date || i.cover_date, cover: mtImg(i.image) })) };
 }
 
-export const ids = { film: t => `tmdb-${t}`, show: t => `tv-${t}`, series: c => `cv-${c}`, book: (title, ref) => slug(title) || slug(ref) };
+export const ids = { film: t => `tmdb-${t}`, show: t => `tv-${t}`, series: c => (String(c).startsWith("mt:") ? `mt-${String(c).slice(3)}` : `cv-${c}`), book: (title, ref) => slug(title) || slug(ref) };
