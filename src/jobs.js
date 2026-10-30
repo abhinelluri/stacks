@@ -19,10 +19,12 @@ export async function backfill(env) {
       for (const { id } of rows) {
         if (f.left() < 4) break;
         const fresh = await getItem(env, kind, id);
+        if (!fresh) continue;
         try {
           const tid = await matchFilm(env, f, fresh.title, fresh.year);
           const meta = tid ? await filmDetails(env, f, tid) : null;
-          const latest = (await getItem(env, kind, id)) || fresh;  // don't overwrite edits made meanwhile
+          const latest = await getItem(env, kind, id);  // re-read: keep edits made meanwhile, and skip if you removed it
+          if (!latest) continue;
           await putItem(env, kind, id, meta
             ? { ...latest, tmdb: meta.tmdb, poster: meta.poster, runtime: meta.runtime, directors: meta.directors, cast: meta.cast, genres: meta.genres }
             : { ...latest, matchFailed: true });
@@ -40,7 +42,8 @@ export async function backfill(env) {
     if (f.left() < 3) break;
     try {
       const x = await bookExtras(env, f, doc);
-      const latest = (await getItem(env, "book", id)) || doc;
+      const latest = await getItem(env, "book", id);
+      if (!latest) continue;
       await putItem(env, "book", id, { ...latest, cover: x?.cover ?? null, pages: latest.pages ?? x?.pages ?? null, coverTried: true });
     } catch (e) {
       log("book cover", id, e.message);
@@ -79,7 +82,8 @@ export async function refreshShow(env, f, id) {
   const fresh = await getItem(env, "show", id);
   if (!fresh?.tmdb) return fresh;
   const d = await showDetails(env, f, fresh.tmdb, fresh, true);
-  const latest = (await getItem(env, "show", id)) || fresh;
+  const latest = await getItem(env, "show", id);
+  if (!latest) return null;
   const doc = autoStatus("show", { ...latest, title: d.title, poster: d.poster || latest.poster, ongoing: d.ongoing, network: d.network, genres: d.genres, seasons: mergeEpisodes(latest, d), refreshed: now() });
   await putItem(env, "show", id, doc);
   return doc;
@@ -105,7 +109,8 @@ export async function refreshSeries(env, f, id) {
       if (up.issues.length) doc.ongoing = true;
     } catch (e) { log("metron", id, e.message); }
   }
-  const latest = (await getItem(env, "series", id)) || fresh;
+  const latest = await getItem(env, "series", id);
+  if (!latest) return null;
   doc = autoStatus("series", { ...latest, cover: doc.cover, ongoing: doc.ongoing, end: doc.end, metron: doc.metron, issues: mergeIssues(latest, doc), refreshed: now() });
   await putItem(env, "series", id, doc);
   return doc;

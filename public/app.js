@@ -36,7 +36,7 @@ const VERB = {
 const FILTER_DEFAULT = { venue: "all", liked: false, rewatch: false, notes: false, rating: "any", decade: "any", q: "", director: "", actor: "", genre: "" };
 
 let D, films, log = null, sel = null, bookUnit = null, showSkipped = false;
-const state = { filmTab: "diary", f: { ...FILTER_DEFAULT }, moreOpen: false, tab: { book: "reading", comic: "reading", tv: "watching" }, comicView: "shelves", topCat: "film", topScope: "all", shelfPick: null };
+const state = { reorder: false, filmTab: "diary", f: { ...FILTER_DEFAULT }, moreOpen: false, tab: { book: "reading", comic: "reading", tv: "watching" }, comicView: "shelves", topCat: "film", topScope: "all", shelfPick: null };
 
 const items = k => k === "book" ? D.books : k === "comic" ? D.series : k === "tv" ? D.shows : D.films;
 const find = (k, id) => items(k).find(x => x.id === id);
@@ -60,7 +60,40 @@ function progress(k, x) {
 }
 const seasonRating = s => { const r = s.episodes.filter(e => e.rating != null).map(e => e.rating); return r.length ? Math.round(avg(r) * 2) / 2 : null; };
 const showRating = x => { const r = x.seasons.map(seasonRating).filter(v => v != null); return r.length ? Math.round(avg(r) * 2) / 2 : null; };
-function setStatus(k, x, s, d = today()) { x.status = s; x.history.push({ s, d }); }
+function setStatus(k, x, s, d = today()) { x.status = s; x.history.push({ s, d }); if (s !== "want") delete x.priority; }
+
+/* Want lists: ranked items first (#1 = read/watch next), then unranked, newest first */
+const wantList = k => (k === "film" ? D.watchlist : items(k).filter(x => x.status === "want"));
+const addedOn = (k, x) => (k === "film" ? x.added : [...x.history].reverse().find(h => h.s === "want")?.d) || "";
+const sortedWant = k => [...wantList(k)].sort((a, b) => (a.priority ?? 1e9) - (b.priority ?? 1e9) || addedOn(k, b).localeCompare(addedOn(k, a)));
+const rankWant = ordered => ordered.forEach((x, i) => { x.priority = i + 1; });
+const prioBadge = x => (x.priority ? `<span class="prio">#${x.priority}</span>` : "");
+function reorderHtml(k) {
+  return `<ol class="tops c-${k}">${sortedWant(k).map((x, n, all) => `<li class="filled"><span class="rank">${n + 1}</span>${cover(k, nameOf(k, x), "", { thumb: true, img: artOf(k, x) })}<span class="t"><b>${esc(nameOf(k, x))}</b><span>${esc(k === "book" ? x.authors[0] : x.year ?? "")}</span></span>
+    <span class="acts"><button data-rtop="${n}" aria-label="Move to top" ${n ? "" : "disabled"}>⤒</button><button data-rup="${n}" aria-label="Move up" ${n ? "" : "disabled"}>↑</button><button data-rdown="${n}" aria-label="Move down" ${n < all.length - 1 ? "" : "disabled"}>↓</button></span></li>`).join("")}</ol>`;
+}
+function bindReorder(k, rerender) {
+  const move = (from, to) => { const list = sortedWant(k); const [x] = list.splice(from, 1); list.splice(to, 0, x); rankWant(list); rerender(); };
+  $$("[data-rtop]").forEach(b => b.onclick = () => move(+b.dataset.rtop, 0));
+  $$("[data-rup]").forEach(b => b.onclick = () => move(+b.dataset.rup, +b.dataset.rup - 1));
+  $$("[data-rdown]").forEach(b => b.onclick = () => move(+b.dataset.rdown, +b.dataset.rdown + 1));
+  const t = $("#reorder"); if (t) t.onclick = () => { state.reorder = !state.reorder; rerender(); };
+}
+const reorderBar = n => (n > 1 ? `<div class="controls"><button class="chip" id="reorder" aria-pressed="${state.reorder}">${state.reorder ? "Done" : "Set priority order"}</button>${state.reorder ? `<span class="hint">#1 is what you'll get to next. Use the arrows to reorder.</span>` : ""}</div>` : "");
+
+/* Remove something added by mistake: the item, its diary/progress, and any Top 10 spot */
+function removeEverywhere(k, id) {
+  if (k === "film") { D.watches = D.watches.filter(w => w.film !== id); D.watchlist = D.watchlist.filter(w => w.id !== id); D.films = D.films.filter(f => f.id !== id); delete films[id]; }
+  else { const arr = items(k), i = arr.findIndex(x => x.id === id); if (i >= 0) arr.splice(i, 1); }
+  const t = D.tops[k]; if (t) { t.all = t.all.filter(v => v !== id); Object.keys(t.years).forEach(y => { t.years[y] = t.years[y].filter(v => v !== id); }); }
+}
+function bindRemove(el, k, id, what) {
+  const b = $("#remove", el); if (!b) return;
+  b.onclick = () => {
+    if (b.dataset.sure !== "1") { b.dataset.sure = "1"; b.textContent = `Tap again to remove it${what ? ` and ${what}` : ""}`; return; }
+    removeEverywhere(k, id); toast("Removed from Stacks"); closeSheet();
+  };
+}
 function autoStatus(k, x) {
   const p = progress(k, x), act = k === "tv" ? "watching" : "reading";
   if (!p.next && p.total) { const s = x.ongoing ? "caught" : "finished"; if (x.status !== s) setStatus(k, x, s); }
@@ -78,6 +111,7 @@ function setBookStatus(b, s, d = today(), opts = {}) {
   if (["reading", "paused", "read", "dnf"].includes(s) && !r) { r = { start: d, end: null, outcome: null, rating: null, sessions: [] }; b.reads.push(r); }
   if (s === "read" || s === "dnf") { r.end = d; r.outcome = s; if (s === "read") { r.rating = opts.rating ?? null; if (r.rating != null) b.rating = r.rating; } }
   b.status = s; b.history.push({ s: opts.reread ? "reread" : s, d });
+  if (s !== "want") delete b.priority;
 }
 function bookDays(b) {
   const out = [];
@@ -188,7 +222,7 @@ function renderFilms() {
   const rated = D.watches.filter(w => w.rating != null).map(w => w.rating), f = state.f;
   let body;
   if (state.filmTab === "watchlist") {
-    body = D.watchlist.length ? `<div class="grid">${D.watchlist.map(w => `<button class="tile" data-wl="${esc(w.id)}">${cover("film", w.title, w.year, { img: w.poster })}<span class="t">${esc(w.title)}</span><p>${w.year}, added ${shortDate(w.added)}</p></button>`).join("")}</div>`
+    body = D.watchlist.length ? reorderBar(D.watchlist.length) + (state.reorder ? reorderHtml("film") : `<div class="grid">${sortedWant("film").map(w => `<button class="tile" data-wl="${esc(w.id)}">${cover("film", w.title, w.year, { img: w.poster })}<span class="t">${prioBadge(w)}${esc(w.title)}</span><p>${w.year}, added ${shortDate(w.added)}</p></button>`).join("")}</div>`)
       : `<div class="empty"><b>Nothing on your watchlist</b><p>Use + and choose "Want to watch" to add a film, or tap "Add to watchlist" on any film's page. Letterboxd's watchlist file can be imported too.</p></div>`;
   } else {
     const list = filteredWatches(), groups = {};
@@ -241,7 +275,8 @@ function renderFilms() {
     ${body}
   </div>`;
   const re = () => renderFilms();
-  $$("[data-ft]").forEach(b => b.onclick = () => { state.filmTab = b.dataset.ft; re(); });
+  $$("[data-ft]").forEach(b => b.onclick = () => { state.filmTab = b.dataset.ft; state.reorder = false; re(); });
+  if (state.filmTab === "watchlist") bindReorder("film", re);
   $$("[data-venue]").forEach(b => b.onclick = () => { f.venue = b.dataset.venue; re(); });
   $$("[data-flag]").forEach(b => b.onclick = () => { f[b.dataset.flag] = !f[b.dataset.flag]; re(); });
   const on = (id, ev, fn) => { const el = $(id); if (el) el[ev] = fn; };
@@ -272,8 +307,10 @@ function openFilm(id) {
     </div>
     ${ws.length ? `<div class="field"><span>Watched ${ws.length} time${ws.length === 1 ? "" : "s"}</span>
       <ul class="timeline">${ws.map(w => `<li><span class="num">${longDate(w.date)}</span><span>${VENUE[w.venue]}${w.rewatch ? ", rewatch" : ""} ${stars(w.rating)}</span><button class="linkish" data-edit="${w.id}">Edit</button>${w.review ? `<p class="rv">${esc(w.review)}</p>` : ""}</li>`).join("")}</ul></div>` : ""}
-    ${meta.cast.length ? `<div class="field"><span>Cast</span><p style="margin:0">${esc(meta.cast.slice(0, 8).join(", "))}</p></div>` : `<p class="hint">Poster, runtime, director, cast and genres come from TMDB in the next phase.</p>`}
+    ${meta.cast.length ? `<div class="field"><span>Cast</span><p style="margin:0">${esc(meta.cast.slice(0, 8).join(", "))}</p></div>` : `<p class="hint">Poster, runtime, director and cast fill in once this film is matched to TMDB.</p>`}
+    <button class="danger" id="remove">Remove from Stacks</button>
   `, el => {
+    bindRemove(el, "film", id, ws.length ? `its ${ws.length} diary entr${ws.length === 1 ? "y" : "ies"}` : "");
     const re = () => openFilm(id);
     $("#like", el) && ($("#like", el).onclick = () => { m.liked = !m.liked; re(); });
     $("#wl", el).onclick = () => { if (onWl) D.watchlist = D.watchlist.filter(w => w.id !== id); else D.watchlist.unshift({ id, title: m.title, year: m.year, added: today(), poster: m.poster, tmdb: m.tmdb ?? null }); re(); };
@@ -303,24 +340,26 @@ function renderShelfPage(k) {
   const chips = `<div class="status-row" role="group" aria-label="Status">${STATUS[k].map(([s, l]) => `<button class="chip" data-st="${s}" aria-pressed="${state.tab[k] === s}">${l}<span class="n">${all.filter(x => x.status === s).length}</span></button>`).join("")}</div>`;
   if (k === "comic" && state.comicView === "upcoming") body = renderUpcoming();
   else {
-    const list = all.filter(x => x.status === state.tab[k]);
+    const want = state.tab[k] === "want", list = want ? sortedWant(k) : all.filter(x => x.status === state.tab[k]);
     if (!all.length) body = chips + (k === "tv"
       ? `<div class="empty"><b>No shows yet</b><p>Use + to search for a show. Seasons, episodes, runtimes and posters fill in from TMDB, and each episode you mark keeps its date and rating.</p></div>`
       : `<div class="empty"><b>Starting fresh</b><p>Use + to search for a series. Every issue, cover and release date fills in from Comic Vine, and new issues are added automatically as they come out.</p></div>`);
     else if (!list.length) body = chips + `<div class="empty"><p>${EMPTY[k][state.tab[k]]}</p></div>`;
-    else if (k === "book") body = chips + `<div class="grid">${list.map(b => { const last = b.history.at(-1), pct = b.status === "reading" ? bookPct(b) : null, n = b.reads.filter(r => r.outcome === "read").length; return `
-      <button class="tile c-book" data-open="book:${esc(b.id)}">${cover("book", b.title, b.authors[0], { img: b.cover })}<span class="t">${esc(b.title)}</span>
+    else if (want && state.reorder) body = chips + reorderBar(list.length) + reorderHtml(k);
+    else if (k === "book") body = chips + (want ? reorderBar(list.length) : "") + `<div class="grid">${list.map(b => { const last = b.history.at(-1), pct = b.status === "reading" ? bookPct(b) : null, n = b.reads.filter(r => r.outcome === "read").length; return `
+      <button class="tile c-book" data-open="book:${esc(b.id)}">${cover("book", b.title, b.authors[0], { img: b.cover })}<span class="t">${want ? prioBadge(b) : ""}${esc(b.title)}</span>
       ${pct != null ? `<div class="meter"><i style="width:${pct}%"></i></div>` : ""}
       ${b.status === "read" ? stars(b.rating) : ""}<p>${b.format === "audiobook" ? "Audiobook. " : ""}${last ? `${VERB.book[last.s]} ${shortDate(last.d)}` : ""}${n > 1 ? `. Read ${n} times` : ""}</p></button>`; }).join("")}</div>`;
-    else body = chips + `<div class="rows">${list.map(x => { const p = progress(k, x), r = k === "tv" ? showRating(x) : null; return `
+    else body = chips + (want ? reorderBar(list.length) : "") + `<div class="rows">${list.map(x => { const p = progress(k, x), r = k === "tv" ? showRating(x) : null; return `
       <button class="row c-${k}" data-open="${k}:${esc(x.id)}">${cover(k, nameOf(k, x), "", { thumb: true, img: artOf(k, x) })}
-        <span><b>${esc(nameOf(k, x))}</b> <span class="sub">${esc(subOf(k, x))}</span></span>
+        <span>${want ? prioBadge(x) : ""}<b>${esc(nameOf(k, x))}</b> <span class="sub">${esc(subOf(k, x))}</span></span>
         <span class="count num">${p.done}/${p.total}${p.next ? `, next ${esc(p.next.label)}` : ""}${r != null ? ` ${stars(r)}` : ""}</span>
         <span class="cells" aria-hidden="true">${units(k, x).filter(u => !u.skip).slice(0, 160).map(u => `<i class="${u.done ? "r" : u.out ? "" : "f"}"></i>`).join("")}</span>
       </button>`; }).join("")}</div>`;
   }
   $("#app").innerHTML = `<div class="view"><div class="page-head"><h1>${PLURAL[k]}</h1><div class="summary">${summary}</div>${top}</div>${body}</div>`;
-  $$("[data-st]").forEach(b => b.onclick = () => { state.tab[k] = b.dataset.st; renderShelfPage(k); });
+  $$("[data-st]").forEach(b => b.onclick = () => { state.tab[k] = b.dataset.st; state.reorder = false; renderShelfPage(k); });
+  if (state.tab[k] === "want") bindReorder(k, () => renderShelfPage(k));
   $$("[data-cv]").forEach(b => b.onclick = () => { state.comicView = b.dataset.cv; renderShelfPage(k); });
 }
 function upcoming() {
@@ -364,8 +403,10 @@ function openDetail(k, id) {
     ${k !== "book" && (x.tmdb || x.cv) ? `<button class="chip" id="refresh" style="justify-self:start">Check for new ${k === "tv" ? "episodes" : "issues"}</button>` : ""}
     <div class="field"><span>Status history</span>${x.history.length ? `<ul class="timeline">${[...x.history].reverse().map(h => `<li><span class="num">${longDate(h.d)}</span><span>${VERB[k][h.s]}</span><span></span></li>`).join("")}</ul>` : `<p class="hint">Status changes are dated from here on.</p>`}</div>
     ${x.review ? `<div class="field"><span>Notes</span><p style="margin:0">${esc(x.review)}</p></div>` : ""}
+    <button class="danger" id="remove">Remove from Stacks</button>
   `, el => {
     const re = () => openDetail(k, id);
+    { const n = k === "book" ? x.reads.length : progress(k, x).done; bindRemove(el, k, id, n ? (k === "book" ? "its reading history" : `${n} ${k === "tv" ? "watched episode" : "read issue"}${n === 1 ? "" : "s"}`) : ""); }
     $$("[data-set]", el).forEach(b => b.onclick = () => { if (x.status === b.dataset.set) return; k === "book" ? setBookStatus(x, b.dataset.set) : setStatus(k, x, b.dataset.set); toast(`Moved to ${STATUS[k].find(s => s[0] === b.dataset.set)[1]}`); re(); });
     const rf = $("#refresh", el);
     if (rf) rf.onclick = async () => {
@@ -629,6 +670,7 @@ function renderLog() {
     <input class="search" id="log-q" type="search" autocomplete="off" ${log.edit ? "disabled" : ""} placeholder="${{ film: "Film title", tv: "Show title", book: "Book title or author", comic: "Series name" }[k]}" value="${esc(log.q)}" aria-label="Search">
     ${log.q && !log.pick ? resultsHtml(res) : ""}
     ${log.pick ? `
+      ${m === "want" ? `<button class="toggle plain" id="lg-top" aria-pressed="${!!log.top}" style="justify-self:start">${log.top ? "Top priority" : "Make it top priority"}</button>` : ""}
       ${m === "want" && cur && x.status !== "want" ? `<p class="hint">It's in ${esc(cur)} now. This moves it to ${WANT[k]}.</p>` : ""}
       ${m === "status" ? `<div class="field"><span>Move to${cur ? ` (now in ${esc(cur)})` : ""}</span><div class="controls">${STATUS[k].filter(([v]) => v !== "want").map(([v, l]) => `<button class="chip small" data-st2="${v}" aria-pressed="${log.status === v}">${l}</button>`).join("")}</div></div>` : ""}
       ${k === "book" && logging ? `<div class="field"><span>What happened</span><div class="controls">${BOOK_ACTS.map(([a, l]) => `<button class="chip small" data-act="${a}" aria-pressed="${log.act === a}">${l}</button>`).join("")}</div></div>
@@ -658,11 +700,16 @@ function renderLog() {
     const on = (id, fn) => { const el = $(id, s); if (el) el.onclick = fn; };
     on("#lg-like", () => { log.liked = !log.liked; re(); });
     on("#lg-re", () => { log.rewatch = !log.rewatch; re(); });
+    on("#lg-top", () => { log.top = !log.top; re(); });
     if ($("#log-stars", s)) bindStars("log-stars", () => log.rating, v => log.rating = v, re);
     on("#log-del", () => { D.watches = D.watches.filter(w => w !== log.edit); toast("Entry deleted"); closeSheet(); });
     on("#log-save", () => {
       keep();
-      if (k === "film" && log.mode === "want") { const m = films[log.pick]; if (!D.watchlist.some(w => w.id === m.id)) D.watchlist.unshift({ id: m.id, title: m.title, year: m.year, added: today(), poster: m.poster, tmdb: m.tmdb ?? null }); toast("Added to watchlist"); return closeSheet(); }
+      if (k === "film" && log.mode === "want") {
+        const m = films[log.pick]; if (!D.watchlist.some(w => w.id === m.id)) D.watchlist.unshift({ id: m.id, title: m.title, year: m.year, added: today(), poster: m.poster, tmdb: m.tmdb ?? null });
+        if (log.top) { const w = D.watchlist.find(z => z.id === m.id); rankWant([w, ...sortedWant("film").filter(z => z !== w)]); }
+        toast(log.top ? "Added to the top of your watchlist" : "Added to watchlist"); return closeSheet();
+      }
       if (k === "film") {
         films[log.pick].liked = log.liked;
         const w = log.edit || { id: uid(), film: log.pick };
@@ -674,6 +721,7 @@ function renderLog() {
       }
       if (m === "want") {
         if (x.status !== "want" || !x.history.some(h => h.s === "want")) k === "book" ? setBookStatus(x, "want", log.date) : setStatus(k, x, "want", log.date);
+        if (log.top) rankWant([x, ...sortedWant(k).filter(z => z !== x)]);
         toast(`Added to ${WANT[k]}`); return closeSheet();
       }
       if (m === "status") {

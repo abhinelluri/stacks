@@ -309,3 +309,5 @@ body.locked .bottom, body.locked .fab, body.locked .tabs, body.locked .top-right
 .unit-grid button.s{opacity:.45;border-style:dotted}
 .seg.three{grid-template-columns:repeat(3,1fr)}
 .seg.three button{font-size:13px;line-height:1.2}
+.prio{display:inline-block;font:700 12px/1.6 var(--body);color:var(--paper);background:var(--ink);border-radius:999px;padding:0 7px;margin-right:6px;vertical-align:1px}
+.sheet .danger{margin-top:4px;border-top:1px solid var(--rule);padding-top:14px;justify-self:stretch;text-align:left}
